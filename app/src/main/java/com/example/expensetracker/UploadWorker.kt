@@ -8,8 +8,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Posts one expense to the Apps Script web app.
- * WorkManager persists the job, so entries made offline are sent later and retried on failure.
+ * Posts an expense or income entry to the Google Apps Script web app.
+ * WorkManager persists and retries automatically if offline.
  */
 class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
 
@@ -22,8 +22,9 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
 
         val body = JSONObject().apply {
             put("amount", inputData.getDouble("amount", 0.0))
+            put("type", inputData.getString("type") ?: "Expense")
             put("category", inputData.getString("category") ?: "Miscellaneous")
-            put("payment", inputData.getString("payment") ?: "Cash")
+            put("payment", inputData.getString("payment") ?: "GPay")
             put("user", userParam)
             put("ts", inputData.getLong("ts", System.currentTimeMillis()))
             put("secret", Prefs.secret(applicationContext))

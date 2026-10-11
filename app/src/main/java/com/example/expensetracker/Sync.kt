@@ -7,7 +7,7 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlin.concurrent.thread
 
-/** Pulls categories, payment types, and users from the sheet's Lists tab. */
+/** Pulls expense and income tags, payment types, and users from the backend sheet. */
 object Sync {
     fun run(ctx: Context) {
         val app = ctx.applicationContext
@@ -29,15 +29,22 @@ object Sync {
                     val a = j.optJSONArray(key) ?: return emptyList()
                     return (0 until a.length()).map { a.getString(it).trim() }.filter { it.isNotEmpty() }
                 }
-                val cats = names("categories")
+                val exp = names("expense_categories").ifEmpty { names("categories") }
+                val inc = names("income_categories")
                 val pays = names("payments")
                 val usrs = names("users")
 
-                if (cats.isNotEmpty() && pays.isNotEmpty()) {
-                    Prefs.saveLists(app, cats.joinToString(","), pays.joinToString(","), usrs.joinToString(","))
+                if (exp.isNotEmpty()) {
+                    Prefs.saveLists(
+                        app,
+                        exp.joinToString(","),
+                        inc.ifEmpty { listOf("Salary", "F99 payment", "Borrowed", "Income") }.joinToString(","),
+                        pays.ifEmpty { listOf("GPay", "Card", "Cash") }.joinToString(","),
+                        usrs.joinToString(",")
+                    )
                 }
             } catch (_: Exception) {
-                // Offline or script not deployed yet: keep cached lists.
+                // Keep local defaults if offline or backend is unreachable
             }
         }
     }
