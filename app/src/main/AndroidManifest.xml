@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -10,21 +14,26 @@
         android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
 
         <!-- Settings screen (URL, secret, tags) -->
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- The quick-entry popup. Every trigger just opens this. -->
+        <!-- The quick-entry popup. Triggered by volume gesture or tile. -->
         <activity
             android:name=".ExpenseActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.DeviceDefault.Light.Dialog" />
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:windowSoftInputMode="stateVisible|adjustResize"
+            android:theme="@style/Theme.ExpenseTracker.Dialog" />
 
         <!-- TRIGGER 1: triple-press volume down (Accessibility Service) -->
         <service

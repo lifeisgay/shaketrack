@@ -17,11 +17,14 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
         val url = Prefs.url(applicationContext)
         if (url.isEmpty()) return Result.failure()
 
+        val userParam = inputData.getString("user")?.ifEmpty { null }
+            ?: Prefs.user(applicationContext)
+
         val body = JSONObject().apply {
             put("amount", inputData.getDouble("amount", 0.0))
-            put("category", inputData.getString("category"))
-            put("payment", inputData.getString("payment"))
-            put("user", Prefs.user(applicationContext))
+            put("category", inputData.getString("category") ?: "Miscellaneous")
+            put("payment", inputData.getString("payment") ?: "Cash")
+            put("user", userParam)
             put("ts", inputData.getLong("ts", System.currentTimeMillis()))
             put("secret", Prefs.secret(applicationContext))
         }.toString()
@@ -32,18 +35,22 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                 doOutput = true
                 connectTimeout = 15000
                 readTimeout = 15000
+                instanceFollowRedirects = true
                 setRequestProperty("Content-Type", "application/json")
             }
             conn.outputStream.use { it.write(body.toByteArray()) }
-            val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
+
+            val responseCode = conn.responseCode
+            val text = (if (responseCode in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() }?.trim() ?: ""
             conn.disconnect()
+
             when {
-                text == "ok" -> Result.success()
-                text == "unauthorized" -> Result.failure()
+                text == "ok" || responseCode == 200 || responseCode == 302 -> Result.success()
+                text == "unauthorized" || responseCode == 401 -> Result.failure()
                 else -> Result.retry()
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             Result.retry()
         }
     }
