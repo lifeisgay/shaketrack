@@ -1,7 +1,6 @@
 // ============================================================================
 // ShakeTrack: Personal Financial Tracker & Dashboard Backend
 // ============================================================================
-// 1) Secret key for secure mobile sync:
 const SECRET = "whatrasudeep";
 const N = 5000; // Maximum data rows evaluated
 
@@ -114,7 +113,7 @@ function doPost(e) {
 }
 
 // ----------------------------------------------------------------------------
-// SETUP: Initializer for Lists & Dashboard
+// SETUP: Initializer for Lists & Dashboards
 // ----------------------------------------------------------------------------
 function setup() {
   setupLists();
@@ -175,14 +174,14 @@ function buildDashboard() {
   // Column widths
   d.setColumnWidth(1, 40);  // A: Margin
   d.setColumnWidth(2, 150); // B: Cat name (Expenses)
-  d.setColumnWidth(3, 70);  // C: %
+  d.setColumnWidth(3, 75);  // C: %
   d.setColumnWidth(4, 110); // D: Amount
   d.setColumnWidth(5, 100); // E: Bar
   d.setColumnWidth(6, 30);  // F: Spacer
   d.setColumnWidth(7, 340); // G: Donut Chart Area (Expenses)
   d.setColumnWidth(8, 30);  // H: Spacer
   d.setColumnWidth(9, 140); // I: Cat name (Income)
-  d.setColumnWidth(10, 70); // J: %
+  d.setColumnWidth(10, 75); // J: %
   d.setColumnWidth(11, 110);// K: Amount
   d.setColumnWidth(12, 100);// L: Bar
   d.setColumnWidth(13, 30); // M: Spacer
@@ -242,72 +241,83 @@ function buildDashboard() {
   // Card 4: Horizontal Comparison Bars (Top Right, Cols L to N)
   d.getRange("L6:N6").merge().setValue("INCOME VS EXPENSE COMPARISON").setFontWeight("bold").setFontSize(9).setFontColor("#475569").setBackground("#F1F5F9");
   d.getRange("L7").setValue("Income").setFontSize(9).setFontWeight("bold").setFontColor(BLUE);
-  d.getRange("M7:N7").merge().setFormula(`=SPARKLINE(B7,{"charttype","bar";"max",MAX(B7,E7,1);"color1","${BLUE}"})`);
+  d.getRange("M7:N7").merge().setFormula(`=IFERROR(SPARKLINE(B7,{"charttype","bar";"max",MAX(B7,E7,1);"color1","${BLUE}"}),"")`);
   d.getRange("L8").setValue("Expenses").setFontSize(9).setFontWeight("bold").setFontColor(RED);
-  d.getRange("M8:N8").merge().setFormula(`=SPARKLINE(E7,{"charttype","bar";"max",MAX(B7,E7,1);"color1","${RED}"})`);
+  d.getRange("M8:N8").merge().setFormula(`=IFERROR(SPARKLINE(E7,{"charttype","bar";"max",MAX(B7,E7,1);"color1","${RED}"}),"")`);
   d.getRange("L9").setValue("Savings").setFontSize(9).setFontWeight("bold").setFontColor(GREEN);
-  d.getRange("M9:N9").merge().setFormula(`=SPARKLINE(MAX(0,I7),{"charttype","bar";"max",MAX(B7,E7,1);"color1","${GREEN}"})`);
+  d.getRange("M9:N9").merge().setFormula(`=IFERROR(SPARKLINE(MAX(0,I7),{"charttype","bar";"max",MAX(B7,E7,1);"color1","${GREEN}"}),"")`);
   d.getRange("L6:N9").setBorder(true, true, true, true, false, false, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
 
-  // --- SECTION: EXPENSES TABLE & DONUT CHART (Row 12) ---
+  // ==========================================================================
+  // SECTION: EXPENSES TABLE
+  // ==========================================================================
   d.getRange("B12:E12").merge().setValue("EXPENSES BREAKDOWN").setBackground("#991B1B").setFontColor("#FFFFFF").setFontWeight("bold");
   d.getRange("B13:E13").setValues([["Category", "%", "Amount", "Share"]]).setBackground("#FEE2E2").setFontColor("#991B1B").setFontWeight("bold");
 
+  // Write category names as LITERAL VALUES (prevents #NAME? errors)
+  const expCats = EXPENSE_CATEGORIES.map(c => [c]);
+  d.getRange(14, 2, EXPENSE_CATEGORIES.length, 1).setValues(expCats).setFontColor(NAVY);
+
+  // Write formulas for columns C, D, E
   const expFormulas = [];
   for (let i = 0; i < EXPENSE_CATEGORIES.length; i++) {
     const r = 14 + i;
-    const cat = EXPENSE_CATEGORIES[i];
     expFormulas.push([
-      cat,
       `=IF($E$7=0,0,D${r}/$E$7)`,
       `=IFERROR(SUMIFS(${amtCol},${typeCol},"Expense",${catCol},B${r},${inMonth}),0)`,
       `=IF(D${r}=0,"",SPARKLINE(C${r},{"charttype","bar";"max",1;"color1","${RED}"}))`
     ]);
   }
-  d.getRange(14, 2, EXPENSE_CATEGORIES.length, 4).setFormulas(expFormulas);
+  d.getRange(14, 3, EXPENSE_CATEGORIES.length, 3).setFormulas(expFormulas);
   d.getRange(14, 3, EXPENSE_CATEGORIES.length, 1).setNumberFormat(PCT);
   d.getRange(14, 4, EXPENSE_CATEGORIES.length, 1).setNumberFormat(INR);
 
   const expTotalRow = 14 + EXPENSE_CATEGORIES.length;
-  d.getRange(expTotalRow, 2, 1, 4).setFormulas([["TOTAL EXPENSES", `=SUM(C14:C${expTotalRow - 1})`, `=SUM(D14:D${expTotalRow - 1})`, ""]])
+  d.getRange(expTotalRow, 2).setValue("TOTAL EXPENSES").setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
+  d.getRange(expTotalRow, 3, 1, 2).setFormulas([[`=SUM(C14:C${expTotalRow - 1})`, `=SUM(D14:D${expTotalRow - 1})`]])
     .setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
+  d.getRange(expTotalRow, 5).setValue("").setBackground("#FEE2E2");
   d.getRange(expTotalRow, 3).setNumberFormat(PCT);
   d.getRange(expTotalRow, 4).setNumberFormat(INR);
 
-  // --- SECTION: INCOME TABLE & DONUT CHART (Row 12, Cols I-L) ---
+  // ==========================================================================
+  // SECTION: INCOME TABLE
+  // ==========================================================================
   d.getRange("I12:L12").merge().setValue("INCOME BREAKDOWN").setBackground("#1E40AF").setFontColor("#FFFFFF").setFontWeight("bold");
   d.getRange("I13:L13").setValues([["Category", "%", "Amount", "Share"]]).setBackground("#DBEAFE").setFontColor("#1E40AF").setFontWeight("bold");
 
+  // Write income category names as LITERAL VALUES (prevents #NAME? errors)
+  const incCats = INCOME_CATEGORIES.map(c => [c]);
+  d.getRange(14, 9, INCOME_CATEGORIES.length, 1).setValues(incCats).setFontColor(NAVY);
+
+  // Write formulas for columns J, K, L
   const incFormulas = [];
   for (let i = 0; i < INCOME_CATEGORIES.length; i++) {
     const r = 14 + i;
-    const cat = INCOME_CATEGORIES[i];
     incFormulas.push([
-      cat,
       `=IF($B$7=0,0,K${r}/$B$7)`,
       `=IFERROR(SUMIFS(${amtCol},${typeCol},"Income",${catCol},I${r},${inMonth}),0)`,
       `=IF(K${r}=0,"",SPARKLINE(J${r},{"charttype","bar";"max",1;"color1","${BLUE}"}))`
     ]);
   }
-  d.getRange(14, 9, INCOME_CATEGORIES.length, 4).setFormulas(incFormulas);
+  d.getRange(14, 10, INCOME_CATEGORIES.length, 3).setFormulas(incFormulas);
   d.getRange(14, 10, INCOME_CATEGORIES.length, 1).setNumberFormat(PCT);
   d.getRange(14, 11, INCOME_CATEGORIES.length, 1).setNumberFormat(INR);
 
   const incTotalRow = 14 + INCOME_CATEGORIES.length;
-  d.getRange(incTotalRow, 9, 1, 4).setFormulas([["TOTAL INCOME", `=SUM(J14:J${incTotalRow - 1})`, `=SUM(K14:K${incTotalRow - 1})`, ""]])
+  d.getRange(incTotalRow, 9).setValue("TOTAL INCOME").setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
+  d.getRange(incTotalRow, 10, 1, 2).setFormulas([[`=SUM(J14:J${incTotalRow - 1})`, `=SUM(K14:K${incTotalRow - 1})`]])
     .setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
+  d.getRange(incTotalRow, 12).setValue("").setBackground("#DBEAFE");
   d.getRange(incTotalRow, 10).setNumberFormat(PCT);
   d.getRange(incTotalRow, 11).setNumberFormat(INR);
 
-  // Borders for tables
   d.getRange(12, 2, EXPENSE_CATEGORIES.length + 3, 4).setBorder(true, true, true, true, true, true, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
   d.getRange(12, 9, INCOME_CATEGORIES.length + 3, 4).setBorder(true, true, true, true, true, true, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
-
   d.getDataRange().setFontFamily("Arial");
 
-  // --- EMBEDDED DONUT CHARTS ---
+  // DONUT CHARTS
   try {
-    // 1. Expenses Donut Chart (Column G)
     const expChart = d.newChart()
       .setChartType(Charts.ChartType.PIE)
       .addRange(d.getRange(`B13:B${expTotalRow - 1}`))
@@ -322,7 +332,6 @@ function buildDashboard() {
       .build();
     d.insertChart(expChart);
 
-    // 2. Income Donut Chart (Column N)
     const incChart = d.newChart()
       .setChartType(Charts.ChartType.PIE)
       .addRange(d.getRange(`I13:I${incTotalRow - 1}`))
@@ -351,7 +360,6 @@ function buildAnnualDashboard() {
   a.clear();
   a.setHiddenGridlines(true);
 
-  // Column widths: Col A is Category/Tag, Cols B-M are Jan-Dec, Col N is Total
   a.setColumnWidth(1, 160);
   for (let c = 2; c <= 13; c++) a.setColumnWidth(c, 90);
   a.setColumnWidth(14, 110);
@@ -359,7 +367,6 @@ function buildAnnualDashboard() {
   const INR = '"₹"#,##0.00';
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-  // Header Title
   a.getRange("A1:N1").merge().setBackground("#0F172A");
   a.getRange("A1").setValue("📅 ANNUAL FINANCIAL MATRIX (MONTH-BY-MONTH HORIZONTAL VIEW)").setFontColor("#FFFFFF")
     .setFontSize(14).setFontWeight("bold").setVerticalAlignment("middle");
@@ -368,7 +375,6 @@ function buildAnnualDashboard() {
   a.getRange("B3").setFormula("=YEAR(Dashboard!C4)").setFontWeight("bold").setBackground("#FEF3C7")
     .setFontColor("#92400E").setHorizontalAlignment("center");
 
-  // Table Column Headers (Row 5)
   a.getRange(5, 1).setValue("Category / Metric").setFontWeight("bold").setBackground("#334155").setFontColor("#FFFFFF");
   for (let i = 0; i < 12; i++) {
     a.getRange(5, i + 2).setValue(MONTHS[i]).setFontWeight("bold").setBackground("#334155").setFontColor("#FFFFFF")
@@ -384,7 +390,7 @@ function buildAnnualDashboard() {
 
   let currentRow = 6;
 
-  // --- 1. INCOME SECTION ---
+  // INCOME
   a.getRange(currentRow, 1, 1, 14).merge().setValue("➕ INCOME (INCOMING)").setBackground("#1E40AF").setFontColor("#FFFFFF")
     .setFontWeight("bold");
   currentRow++;
@@ -393,7 +399,6 @@ function buildAnnualDashboard() {
   for (let cat of INCOME_CATEGORIES) {
     a.getRange(currentRow, 1).setValue(cat).setFontWeight("bold").setFontColor("#1E3A8A");
     for (let m = 0; m < 12; m++) {
-      const colLetter = String.fromCharCode(66 + m);
       const mStart = `DATE($B$3,${m + 1},1)`;
       const mEnd = `EDATE(${mStart},1)`;
       a.getRange(currentRow, m + 2).setFormula(
@@ -405,7 +410,6 @@ function buildAnnualDashboard() {
   }
   const incEndRow = currentRow - 1;
 
-  // Total Income Row
   const totalIncRow = currentRow;
   a.getRange(totalIncRow, 1).setValue("TOTAL INCOME").setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
   for (let m = 0; m < 12; m++) {
@@ -417,7 +421,7 @@ function buildAnnualDashboard() {
     .setBackground("#BFDBFE").setFontColor("#1E40AF");
   currentRow += 2;
 
-  // --- 2. EXPENDITURES SECTION ---
+  // EXPENDITURES
   a.getRange(currentRow, 1, 1, 14).merge().setValue("➖ EXPENDITURES (OUTGOING)").setBackground("#991B1B").setFontColor("#FFFFFF")
     .setFontWeight("bold");
   currentRow++;
@@ -437,7 +441,6 @@ function buildAnnualDashboard() {
   }
   const expEndRow = currentRow - 1;
 
-  // Total Expenses Row
   const totalExpRow = currentRow;
   a.getRange(totalExpRow, 1).setValue("TOTAL EXPENDITURE").setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
   for (let m = 0; m < 12; m++) {
@@ -449,7 +452,7 @@ function buildAnnualDashboard() {
     .setBackground("#FECACA").setFontColor("#991B1B");
   currentRow += 2;
 
-  // --- 3. SUMMARY: NET SAVINGS & REMAINING ---
+  // NET REMAINING
   a.getRange(currentRow, 1, 1, 14).merge().setValue("📊 NET SUMMARY (SAVINGS & REMAINING)").setBackground("#14532D").setFontColor("#FFFFFF")
     .setFontWeight("bold");
   currentRow++;
@@ -475,7 +478,6 @@ function buildAnnualDashboard() {
   a.getRange(pctRow, 14).setFormula(`=IF(N${totalIncRow}=0,"0.0%",N${netRow}/N${totalIncRow})`)
     .setFontWeight("bold").setBackground("#DCFCE7").setFontColor("#15803D").setNumberFormat("0.0%");
 
-  // Format currency across all data rows
   a.getRange(6, 2, currentRow - 6, 13).setNumberFormat(INR);
   a.getRange(5, 1, currentRow - 4, 14).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
   a.getDataRange().setFontFamily("Arial");
