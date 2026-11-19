@@ -22,6 +22,8 @@ jobs:
           KEYSTORE: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$KEYSTORE" ]; then
+            CLEAN=$(printf '%s' "$KEYSTORE" | tr -d '[:space:]')
+            echo "Secret length after trimming: ${#CLEAN} (expected 3436)"
             # Strip spaces / CR / LF that sneak in when the value is pasted from a Windows clipboard
             printf '%s' "$KEYSTORE" | tr -d '[:space:]' | base64 -d > app/shaketrack.keystore
             keytool -list -v -keystore app/shaketrack.keystore -storepass android -alias shaketrack | grep -E "SHA1:"
