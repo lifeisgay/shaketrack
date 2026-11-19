@@ -2,7 +2,7 @@
 <!-- Fill these in once (see README "Google sign-in setup"). Neither value is secret. -->
 <resources>
     <!-- Apps Script Web App URL (Deploy → Web app → URL ending in /exec) -->
-    <string name="script_url" translatable="false">PASTE_WEB_APP_URL</string>
+    <string name="script_url" translatable="false">https://script.google.com/macros/s/AKfycbx6239zbi8EpLYD7M3ZWyT_xzkziy6aCLRbQDEmGK4sRrADI8kfEAc9VdTuFS8rNrg7/exec</string>
     <!-- OAuth client ID of type "Web application"; must equal WEB_CLIENT_ID in Code.gs -->
-    <string name="google_web_client_id" translatable="false">PASTE_WEB_CLIENT_ID.apps.googleusercontent.com</string>
+    <string name="google_web_client_id" translatable="false">658489307438-q4madllvqdr3qria2rp5hm0gb1ve1259.apps.googleusercontent.com</string>
 </resources>

@@ -19,7 +19,8 @@ Everyone in the family signs in with their own Google account; the sheet owner i
 ## One-time setup
 
 ### 1. Sheet + Apps Script
-1. Open the "Expense Tracker" Google Sheet → Extensions → Apps Script. Paste `apps_script/Code.gs`.
+1. Open the Google Sheet → Extensions → Apps Script. Paste `apps_script/Code.gs` and set `SHEET_ID`
+   to the sheet's ID (the long part of its URL), so the script works even if it isn't bound to the sheet.
 2. Project Settings (gear) → set the **time zone** to yours (e.g. Asia/Kolkata) so months add up correctly.
 3. Run `setup()` once (it keeps existing data; it adds the ID/Email columns and the Family Emails column).
 

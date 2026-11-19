@@ -9,7 +9,13 @@
 
 // OAuth "Web application" client ID from Google Cloud (same project as the
 // Android client). Not a secret. Must match google_web_client_id in the app.
-const WEB_CLIENT_ID = "PASTE_WEB_CLIENT_ID.apps.googleusercontent.com";
+const WEB_CLIENT_ID = "658489307438-q4madllvqdr3qria2rp5hm0gb1ve1259.apps.googleusercontent.com";
+
+// The spreadsheet this backend writes to (works whether or not the script is bound to it).
+const SHEET_ID = "1xPl_2t9DiJsruaWz-eyDnZmF8Xvqwm0Ot8eJjImuBg4";
+function book() {
+  return SpreadsheetApp.getActive() || SpreadsheetApp.openById(SHEET_ID);
+}
 
 const N = 5000; // Maximum data rows evaluated by the sheet dashboards
 const RECENT_LIMIT = 30;
@@ -197,7 +203,7 @@ function memberEmailsRaw(l) {
 // Lists (categories / payment methods)
 // ----------------------------------------------------------------------------
 function listsSheet() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = book();
   return ss.getSheetByName("Lists") || setupLists();
 }
 
@@ -216,7 +222,7 @@ function readLists() {
 // Entries
 // ----------------------------------------------------------------------------
 function expensesSheet() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = book();
   let sh = ss.getSheetByName("Expenses");
   if (!sh) {
     sh = ss.insertSheet("Expenses");
@@ -367,10 +373,16 @@ function setup() {
   setupLists();
   buildDashboard();
   buildAnnualDashboard();
+  // Remove the blank default tab of a brand-new spreadsheet
+  const ss = book();
+  const blank = ss.getSheetByName("Sheet1");
+  if (blank && blank.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(blank);
+  const dash = ss.getSheetByName("Dashboard");
+  if (dash) { ss.setActiveSheet(dash); ss.moveActiveSheet(1); }
 }
 
 function setupLists() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = book();
   let lists = ss.getSheetByName("Lists");
   if (!lists) lists = ss.insertSheet("Lists");
 
@@ -410,7 +422,7 @@ function setupLists() {
 // MONTHLY DASHBOARD (Matching the visual card template in the screenshot)
 // ----------------------------------------------------------------------------
 function buildDashboard() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = book();
   let d = ss.getSheetByName("Dashboard");
   if (!d) d = ss.insertSheet("Dashboard");
 
@@ -444,6 +456,7 @@ function buildDashboard() {
     .setVerticalAlignment("middle").setHorizontalAlignment("left");
 
   d.getRange("B4").setValue("Selected Month:").setFontWeight("bold").setFontColor("#334155");
+  d.getRange("C4:D4").merge();
   d.getRange("C4").setValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
     .setNumberFormat("mmmm yyyy").setFontWeight("bold").setBackground("#FEF3C7").setFontColor("#92400E")
     .setHorizontalAlignment("center");
@@ -599,7 +612,7 @@ function buildDashboard() {
 // ANNUAL HORIZONTAL DASHBOARD (Month-by-month full-year matrix)
 // ----------------------------------------------------------------------------
 function buildAnnualDashboard() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = book();
   let a = ss.getSheetByName("Annual View");
   if (!a) a = ss.insertSheet("Annual View");
 
