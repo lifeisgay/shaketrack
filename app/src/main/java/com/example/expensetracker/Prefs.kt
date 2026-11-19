@@ -1,58 +1,71 @@
 package com.example.expensetracker
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 
+/** Local settings, the signed-in session and cached category lists. */
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    const val DEFAULT_EXPENSES = "Food,Fuel,Transport,Groceries,Rent,Snacks and tea,Medicine,F99 expense,Card payment,Miscellaneous"
-    const val DEFAULT_INCOMES = "Salary,F99 payment,Borrowed,Income"
-    const val DEFAULT_PAYMENTS = "GPay,Card,Cash"
-    const val DEFAULT_USERS = "Aneez,User 1"
+    private const val DEFAULT_EXPENSES = "Food,Fuel,Transport,Groceries,Rent,Snacks and tea,Medicine,F99 expense,Card payment,Miscellaneous"
+    private const val DEFAULT_INCOMES = "Salary,F99 payment,Borrowed,Income"
+    private const val DEFAULT_PAYMENTS = "GPay,Card,Cash"
 
     private fun list(s: String) = s.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
-    fun url(c: Context): String = sp(c).getString("url", "") ?: ""
-    fun secret(c: Context): String = sp(c).getString("secret", "") ?: ""
-    fun user(c: Context): String = sp(c).getString("user", "Aneez")?.ifEmpty { "Aneez" } ?: "Aneez"
-    fun setUser(c: Context, u: String) = sp(c).edit().putString("user", u.trim()).apply()
+    // --- Server config (baked into the build via res/values/config.xml) ---
+    fun url(c: Context): String = c.getString(R.string.script_url).trim()
+    fun webClientId(c: Context): String = c.getString(R.string.google_web_client_id).trim()
+    fun isConfigured(c: Context): Boolean =
+        url(c).startsWith("https://") && !webClientId(c).startsWith("PASTE_")
 
-    fun rawExpenses(c: Context): String = sp(c).getString("expense_categories", DEFAULT_EXPENSES) ?: DEFAULT_EXPENSES
-    fun rawIncomes(c: Context): String = sp(c).getString("income_categories", DEFAULT_INCOMES) ?: DEFAULT_INCOMES
-    fun rawPayments(c: Context): String = sp(c).getString("payments", DEFAULT_PAYMENTS) ?: DEFAULT_PAYMENTS
-    fun rawUsers(c: Context): String = sp(c).getString("users", DEFAULT_USERS) ?: DEFAULT_USERS
+    // --- Session ---
+    fun token(c: Context): String = sp(c).getString("token", "") ?: ""
+    fun isSignedIn(c: Context): Boolean = token(c).isNotEmpty()
+    fun name(c: Context): String = sp(c).getString("name", "") ?: ""
+    fun email(c: Context): String = sp(c).getString("email", "") ?: ""
+    fun isAdmin(c: Context): Boolean = sp(c).getBoolean("admin", false)
 
-    fun expenseCategories(c: Context): List<String> = list(rawExpenses(c))
-    fun incomeCategories(c: Context): List<String> = list(rawIncomes(c))
-    fun payments(c: Context): List<String> = list(rawPayments(c))
-
-    fun users(c: Context): List<String> {
-        val l = list(rawUsers(c))
-        val current = user(c)
-        return if (l.contains(current)) l else (listOf(current) + l).distinct()
+    fun saveSession(c: Context, token: String?, me: JSONObject?) {
+        val e = sp(c).edit()
+        if (token != null) e.putString("token", token)
+        if (me != null) {
+            e.putString("name", me.optString("name"))
+                .putString("email", me.optString("email"))
+                .putBoolean("admin", me.optBoolean("admin"))
+        }
+        e.apply()
     }
 
+    fun clearSession(c: Context) {
+        sp(c).edit().remove("token").remove("name").remove("email").remove("admin").apply()
+    }
+
+    // --- Category lists cached from the sheet ---
+    fun expenseCategories(c: Context): List<String> = list(sp(c).getString("expense_categories", DEFAULT_EXPENSES) ?: DEFAULT_EXPENSES)
+    fun incomeCategories(c: Context): List<String> = list(sp(c).getString("income_categories", DEFAULT_INCOMES) ?: DEFAULT_INCOMES)
+    fun payments(c: Context): List<String> = list(sp(c).getString("payments", DEFAULT_PAYMENTS) ?: DEFAULT_PAYMENTS)
+
+    /** Saves lists from a "login" or "lists" response. */
+    fun saveLists(c: Context, j: JSONObject) {
+        fun join(key: String): String? {
+            val a: JSONArray = j.optJSONArray(key) ?: return null
+            val l = (0 until a.length()).map { a.getString(it).trim() }.filter { it.isNotEmpty() }
+            return if (l.isEmpty()) null else l.joinToString(",")
+        }
+        val e = sp(c).edit()
+        join("expense_categories")?.let { e.putString("expense_categories", it) }
+        join("income_categories")?.let { e.putString("income_categories", it) }
+        join("payments")?.let { e.putString("payments", it) }
+        e.apply()
+    }
+
+    // --- Quick entry ---
     fun lastPayment(c: Context): String = sp(c).getString("lastPayment", "GPay") ?: "GPay"
     fun setLastPayment(c: Context, p: String) = sp(c).edit().putString("lastPayment", p).apply()
 
-    fun save(c: Context, url: String, secret: String, user: String) {
-        val trimmedUser = user.trim().ifEmpty { "Aneez" }
-        sp(c).edit()
-            .putString("url", url.trim())
-            .putString("secret", secret.trim())
-            .putString("user", trimmedUser)
-            .apply()
-    }
-
-    /** Saves categorized lists from sheet backend */
-    fun saveLists(c: Context, expenses: String, incomes: String, payments: String, users: String = "") {
-        val editor = sp(c).edit()
-            .putString("expense_categories", expenses)
-            .putString("income_categories", incomes)
-            .putString("payments", payments)
-        if (users.isNotEmpty()) {
-            editor.putString("users", users)
-        }
-        editor.apply()
-    }
+    // --- Shake trigger ---
+    fun shakeEnabled(c: Context): Boolean = sp(c).getBoolean("shake", true)
+    fun setShakeEnabled(c: Context, on: Boolean) = sp(c).edit().putBoolean("shake", on).apply()
 }

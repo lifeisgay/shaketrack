@@ -5,3 +5,6 @@ local.properties
 .idea/
 *.apk
 *.zip
+*.keystore
+*.jks
+*.b64

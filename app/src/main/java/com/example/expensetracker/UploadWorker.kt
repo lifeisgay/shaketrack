@@ -1,58 +1,73 @@
 package com.example.expensetracker
 
 import android.content.Context
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.IOException
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
- * Posts an expense or income entry to the Google Apps Script web app.
- * WorkManager persists and retries automatically if offline.
+ * Posts one entry to the sheet. WorkManager keeps it queued while offline and retries.
+ * Each entry carries a client-made id, so a retry never creates a duplicate row.
  */
 class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
 
     override fun doWork(): Result {
-        val url = Prefs.url(applicationContext)
-        if (url.isEmpty()) return Result.failure()
-
-        val userParam = inputData.getString("user")?.ifEmpty { null }
-            ?: Prefs.user(applicationContext)
-
+        if (!Prefs.isSignedIn(applicationContext)) return Result.retry() // wait for sign-in
         val body = JSONObject().apply {
+            put("id", inputData.getString("id"))
             put("amount", inputData.getDouble("amount", 0.0))
             put("type", inputData.getString("type") ?: "Expense")
             put("category", inputData.getString("category") ?: "Miscellaneous")
             put("payment", inputData.getString("payment") ?: "GPay")
-            put("user", userParam)
             put("ts", inputData.getLong("ts", System.currentTimeMillis()))
-            put("secret", Prefs.secret(applicationContext))
-        }.toString()
-
+        }
         return try {
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = 15000
-                readTimeout = 15000
-                instanceFollowRedirects = true
-                setRequestProperty("Content-Type", "application/json")
-            }
-            conn.outputStream.use { it.write(body.toByteArray()) }
-
-            val responseCode = conn.responseCode
-            val text = (if (responseCode in 200..299) conn.inputStream else conn.errorStream)
-                ?.bufferedReader()?.use { it.readText() }?.trim() ?: ""
-            conn.disconnect()
-
-            when {
-                text == "ok" || responseCode == 200 || responseCode == 302 -> Result.success()
-                text == "unauthorized" || responseCode == 401 -> Result.failure()
-                else -> Result.retry()
-            }
+            Api.callBlocking(applicationContext, "add", body)
+            Result.success()
+        } catch (e: ApiException) {
+            // Signed out / removed: keep it queued so it uploads after signing in again.
+            if (e.auth) Result.retry() else Result.failure()
+        } catch (_: IOException) {
+            Result.retry()
         } catch (_: Exception) {
             Result.retry()
         }
+    }
+
+    companion object {
+        const val TAG = "upload"
+
+        fun enqueue(ctx: Context, amount: Double, type: String, category: String, payment: String) {
+            val req = OneTimeWorkRequestBuilder<UploadWorker>()
+                .setInputData(
+                    workDataOf(
+                        "id" to UUID.randomUUID().toString(),
+                        "amount" to amount,
+                        "type" to type,
+                        "category" to category,
+                        "payment" to payment,
+                        "ts" to System.currentTimeMillis()
+                    )
+                )
+                .addTag(TAG)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(ctx).enqueue(req)
+        }
+
+        /** Number of entries saved on the phone but not yet in the sheet. */
+        fun pendingCount(ctx: Context): Int = try {
+            WorkManager.getInstance(ctx).getWorkInfosByTag(TAG).get().count { !it.state.isFinished }
+        } catch (_: Exception) { 0 }
     }
 }

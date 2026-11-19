@@ -1,8 +1,18 @@
 // ============================================================================
-// ShakeTrack: Personal Financial Tracker & Dashboard Backend
+// ShakeTrack: Family Expense Tracker — Google Sheets backend
+// ----------------------------------------------------------------------------
+// Auth: family members sign in with Google in the app. The app sends the Google
+// ID token once ("login"); we verify it with Google, check the email is on the
+// family list (Lists!D), and hand back a session token used for every later call.
+// The admin is whoever owns this Apps Script project (the account it runs as).
 // ============================================================================
-const SECRET = "whatrasudeep";
-const N = 5000; // Maximum data rows evaluated
+
+// OAuth "Web application" client ID from Google Cloud (same project as the
+// Android client). Not a secret. Must match google_web_client_id in the app.
+const WEB_CLIENT_ID = "PASTE_WEB_CLIENT_ID.apps.googleusercontent.com";
+
+const N = 5000; // Maximum data rows evaluated by the sheet dashboards
+const RECENT_LIMIT = 30;
 
 const EXPENSE_CATEGORIES = [
   "Food",
@@ -30,90 +40,328 @@ const PAYMENT_METHODS = [
   "Cash"
 ];
 
+// Expenses sheet columns (1-based)
+const COL = { DATE: 1, TYPE: 2, CAT: 3, AMT: 4, PAY: 5, USER: 6, NET: 7, ID: 8, EMAIL: 9 };
+const HEADERS = ["Date", "Type", "Category", "Amount", "Payment", "User", "Net Amount", "ID", "Email"];
+
 function json(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ----------------------------------------------------------------------------
-// GET: Sync categories, payments, and users with the mobile app
-// ----------------------------------------------------------------------------
-function doGet(e) {
-  if (!e || !e.parameter || e.parameter.secret !== SECRET) return json({ error: "unauthorized" });
-  const ss = SpreadsheetApp.getActive();
-  let l = ss.getSheetByName("Lists");
-  if (!l) l = setupLists();
+class ApiError extends Error {}
 
-  const col = c => l.getRange(c + "2:" + c).getValues().map(r => String(r[0]).trim()).filter(String);
-  return json({
-    expense_categories: col("A").length ? col("A") : EXPENSE_CATEGORIES,
-    income_categories: col("B").length ? col("B") : INCOME_CATEGORIES,
-    categories: col("A").length ? col("A") : EXPENSE_CATEGORIES,
-    payments: col("C").length ? col("C") : PAYMENT_METHODS,
-    users: col("D").length ? col("D") : ["Aneez", "User 1"]
-  });
+// ----------------------------------------------------------------------------
+// HTTP entry points
+// ----------------------------------------------------------------------------
+function doGet() {
+  return json({ ok: true, app: "ShakeTrack" });
 }
 
-// ----------------------------------------------------------------------------
-// POST: Receive new expense or income from the mobile app
-// ----------------------------------------------------------------------------
 function doPost(e) {
   try {
-    const d = JSON.parse(e.postData.contents);
-    if (d.secret !== SECRET) return ContentService.createTextOutput("unauthorized");
+    const d = JSON.parse((e && e.postData && e.postData.contents) || "{}");
+    if (d.action === "login") return json(login(d));
 
-    const ss = SpreadsheetApp.getActive();
-    let sh = ss.getSheetByName("Expenses");
-    if (!sh) {
-      sh = ss.insertSheet("Expenses");
-      sh.getRange(1, 1, 1, 7).setValues([["Date", "Type", "Category", "Amount", "Payment", "User", "Net Amount"]]);
-      sh.getRange(1, 1, 1, 7).setFontWeight("bold").setBackground("#F1F5F9");
+    const me = sessionUser(d.token);
+    switch (d.action) {
+      case "lists":         return json(Object.assign({ ok: true, me: me }, readLists()));
+      case "add":           return json(withLock(() => addEntry(me, d)));
+      case "recent":        return json(recent(me));
+      case "update":        return json(withLock(() => updateEntry(me, d)));
+      case "delete":        return json(withLock(() => deleteEntry(me, d)));
+      case "summary":       return json(summary(me, d));
+      case "members":       return json(listMembers(me));
+      case "member_add":    return json(withLock(() => addMember(me, d)));
+      case "member_remove": return json(withLock(() => removeMember(me, d)));
+      case "logout":        PropertiesService.getScriptProperties().deleteProperty("s:" + d.token); return json({ ok: true });
+      default: throw new ApiError("Unknown action");
     }
-
-    const isIncome = d.type === "Income" || INCOME_CATEGORIES.includes(d.category);
-    const type = isIncome ? "Income" : "Expense";
-    const category = d.category || (isIncome ? "Income" : "Miscellaneous");
-    const amount = Math.abs(Number(d.amount) || 0);
-    const payment = d.payment || "GPay";
-    const user = (d.user && String(d.user).trim()) || "Aneez";
-    const dateVal = d.ts ? new Date(Number(d.ts)) : new Date();
-
-    // Auto-register new users into Lists column D if not already present
-    const lists = ss.getSheetByName("Lists");
-    if (lists) {
-      const users = lists.getRange("D2:D").getValues().map(r => String(r[0]).trim()).filter(String);
-      if (!users.includes(user)) {
-        lists.getRange(users.length + 2, 4).setValue(user);
-      }
-    }
-
-    // Find next empty row in Expenses
-    const colA = sh.getRange("A:A").getValues();
-    let n = colA.length;
-    while (n > 0 && (colA[n - 1][0] === "" || colA[n - 1][0] === null)) n--;
-    const row = Math.max(n + 1, 2);
-
-    sh.getRange(row, 1, 1, 7).setValues([[
-      dateVal,
-      type,
-      category,
-      amount,
-      payment,
-      user,
-      isIncome ? amount : -amount
-    ]]);
-
-    sh.getRange(row, 1).setNumberFormat("dd-mmm-yyyy hh:mm");
-    sh.getRange(row, 4).setNumberFormat('"₹"#,##0.00');
-    sh.getRange(row, 7).setNumberFormat('"₹"#,##0.00');
-
-    return ContentService.createTextOutput("ok");
   } catch (err) {
-    return ContentService.createTextOutput("error: " + err.message);
+    if (err instanceof ApiError) return json({ ok: false, error: err.message, auth: !!err.auth });
+    return json({ ok: false, error: "Server error: " + err.message });
   }
 }
 
+function withLock(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
 // ----------------------------------------------------------------------------
-// SETUP: Initializer for Lists & Dashboards
+// Auth & family membership
+// ----------------------------------------------------------------------------
+function adminEmail() {
+  return String(Session.getEffectiveUser().getEmail() || "").toLowerCase();
+}
+
+function memberEmails() {
+  const l = listsSheet();
+  const emails = l.getRange("D2:D").getValues()
+    .map(r => String(r[0]).trim().toLowerCase())
+    .filter(v => v.indexOf("@") > 0);
+  const admin = adminEmail();
+  if (admin && emails.indexOf(admin) < 0) emails.unshift(admin);
+  return emails;
+}
+
+function authError(msg) {
+  const e = new ApiError(msg);
+  e.auth = true;
+  return e;
+}
+
+function login(d) {
+  if (!d.idToken) throw new ApiError("Missing Google token");
+  const res = UrlFetchApp.fetch(
+    "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(d.idToken),
+    { muteHttpExceptions: true }
+  );
+  if (res.getResponseCode() !== 200) throw authError("Google sign-in could not be verified");
+  const t = JSON.parse(res.getContentText());
+  const issOk = t.iss === "accounts.google.com" || t.iss === "https://accounts.google.com";
+  const verified = t.email_verified === true || t.email_verified === "true";
+  if (t.aud !== WEB_CLIENT_ID || !issOk || !verified) throw authError("Google sign-in could not be verified");
+
+  const email = String(t.email).toLowerCase();
+  if (memberEmails().indexOf(email) < 0) {
+    throw authError(email + " is not on the family list. Ask the admin to add you.");
+  }
+  const name = String(t.name || t.given_name || email.split("@")[0]);
+  const token = Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
+  PropertiesService.getScriptProperties().setProperty("s:" + token, JSON.stringify({ e: email, n: name, t: Date.now() }));
+
+  return Object.assign({ ok: true, token: token, me: userInfo(email, name) }, readLists());
+}
+
+function userInfo(email, name) {
+  return { email: email, name: name, admin: email === adminEmail() };
+}
+
+function sessionUser(token) {
+  if (!token) throw authError("Please sign in again");
+  const raw = PropertiesService.getScriptProperties().getProperty("s:" + token);
+  if (!raw) throw authError("Please sign in again");
+  const s = JSON.parse(raw);
+  if (memberEmails().indexOf(s.e) < 0) {
+    PropertiesService.getScriptProperties().deleteProperty("s:" + token);
+    throw authError("You were removed from the family list");
+  }
+  return userInfo(s.e, s.n);
+}
+
+function requireAdmin(me) {
+  if (!me.admin) throw new ApiError("Only the admin can do that");
+}
+
+function listMembers(me) {
+  requireAdmin(me);
+  return { ok: true, admin: adminEmail(), members: memberEmails() };
+}
+
+function addMember(me, d) {
+  requireAdmin(me);
+  const email = String(d.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ApiError("That doesn't look like an email address");
+  const l = listsSheet();
+  const existing = l.getRange("D2:D").getValues().map(r => String(r[0]).trim().toLowerCase());
+  if (existing.indexOf(email) < 0 && email !== adminEmail()) {
+    let row = existing.findIndex(v => v === "") ;
+    row = row < 0 ? existing.length + 2 : row + 2;
+    l.getRange(row, 4).setValue(email);
+  }
+  return listMembers(me);
+}
+
+function removeMember(me, d) {
+  requireAdmin(me);
+  const email = String(d.email || "").trim().toLowerCase();
+  if (email === adminEmail()) throw new ApiError("The admin can't be removed");
+  const l = listsSheet();
+  const vals = l.getRange("D2:D").getValues();
+  for (let i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][0]).trim().toLowerCase() === email) l.getRange(i + 2, 4).setValue("");
+  }
+  // Compact the column so there are no gaps
+  const left = memberEmailsRaw(l);
+  l.getRange("D2:D").clearContent();
+  if (left.length) l.getRange(2, 4, left.length, 1).setValues(left.map(v => [v]));
+  return listMembers(me);
+}
+
+function memberEmailsRaw(l) {
+  return l.getRange("D2:D").getValues().map(r => String(r[0]).trim()).filter(String);
+}
+
+// ----------------------------------------------------------------------------
+// Lists (categories / payment methods)
+// ----------------------------------------------------------------------------
+function listsSheet() {
+  const ss = SpreadsheetApp.getActive();
+  return ss.getSheetByName("Lists") || setupLists();
+}
+
+function readLists() {
+  const l = listsSheet();
+  const col = c => l.getRange(c + "2:" + c).getValues().map(r => String(r[0]).trim()).filter(String);
+  const exp = col("A"), inc = col("B"), pay = col("C");
+  return {
+    expense_categories: exp.length ? exp : EXPENSE_CATEGORIES,
+    income_categories: inc.length ? inc : INCOME_CATEGORIES,
+    payments: pay.length ? pay : PAYMENT_METHODS
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Entries
+// ----------------------------------------------------------------------------
+function expensesSheet() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName("Expenses");
+  if (!sh) {
+    sh = ss.insertSheet("Expenses");
+  }
+  if (sh.getRange(1, COL.ID).getValue() !== "ID") {
+    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight("bold").setBackground("#F1F5F9");
+  }
+  return sh;
+}
+
+function lastDataRow(sh) {
+  const colA = sh.getRange("A:A").getValues();
+  let n = colA.length;
+  while (n > 1 && (colA[n - 1][0] === "" || colA[n - 1][0] === null)) n--;
+  return n; // 1 when only the header exists
+}
+
+/** Reads all rows, assigning IDs to legacy rows that don't have one yet. */
+function readRows(sh) {
+  const last = lastDataRow(sh);
+  if (last < 2) return [];
+  const vals = sh.getRange(2, 1, last - 1, COL.EMAIL).getValues();
+  let fixed = false;
+  vals.forEach(v => { if (!v[COL.ID - 1]) { v[COL.ID - 1] = Utilities.getUuid(); fixed = true; } });
+  if (fixed) sh.getRange(2, COL.ID, vals.length, 1).setValues(vals.map(v => [v[COL.ID - 1]]));
+  return vals.map((v, i) => ({
+    row: i + 2,
+    date: v[COL.DATE - 1] instanceof Date ? v[COL.DATE - 1] : new Date(v[COL.DATE - 1]),
+    type: String(v[COL.TYPE - 1]) === "Income" ? "Income" : "Expense",
+    category: String(v[COL.CAT - 1]),
+    amount: Math.abs(Number(v[COL.AMT - 1]) || 0),
+    payment: String(v[COL.PAY - 1]),
+    user: String(v[COL.USER - 1]),
+    id: String(v[COL.ID - 1]),
+    email: String(v[COL.EMAIL - 1]).toLowerCase()
+  }));
+}
+
+function toApi(r) {
+  return {
+    id: r.id, ts: r.date.getTime(), type: r.type, category: r.category,
+    amount: r.amount, payment: r.payment, user: r.user, email: r.email
+  };
+}
+
+function cleanEntry(d) {
+  const type = d.type === "Income" ? "Income" : "Expense";
+  const amount = Math.abs(Number(d.amount) || 0);
+  if (!(amount > 0)) throw new ApiError("Amount must be more than 0");
+  const category = String(d.category || "").trim() || (type === "Income" ? "Income" : "Miscellaneous");
+  const payment = String(d.payment || "").trim() || "GPay";
+  return { type: type, amount: amount, category: category, payment: payment };
+}
+
+function writeRow(sh, row, date, e, me, id) {
+  sh.getRange(row, 1, 1, COL.EMAIL).setValues([[
+    date, e.type, e.category, e.amount, e.payment, me.name,
+    e.type === "Income" ? e.amount : -e.amount, id, me.email
+  ]]);
+  sh.getRange(row, COL.DATE).setNumberFormat("dd-mmm-yyyy hh:mm");
+  sh.getRange(row, COL.AMT).setNumberFormat('"₹"#,##0.00');
+  sh.getRange(row, COL.NET).setNumberFormat('"₹"#,##0.00');
+}
+
+function addEntry(me, d) {
+  const sh = expensesSheet();
+  const id = String(d.id || Utilities.getUuid());
+  // Idempotent: a retried upload with the same id is not added twice
+  const ids = readRows(sh).map(r => r.id);
+  if (ids.indexOf(id) >= 0) return { ok: true, id: id, duplicate: true };
+  const e = cleanEntry(d);
+  const date = d.ts ? new Date(Number(d.ts)) : new Date();
+  writeRow(sh, Math.max(lastDataRow(sh) + 1, 2), date, e, me, id);
+  return { ok: true, id: id };
+}
+
+function findOwned(me, id) {
+  const sh = expensesSheet();
+  const r = readRows(sh).filter(x => x.id === String(id))[0];
+  if (!r) throw new ApiError("Entry not found (it may have been deleted)");
+  if (!me.admin && r.email !== me.email) throw new ApiError("You can only change your own entries");
+  return { sh: sh, r: r };
+}
+
+function updateEntry(me, d) {
+  const f = findOwned(me, d.id);
+  const e = cleanEntry(d);
+  // Keep the original author on the row even when the admin edits it
+  const owner = { name: f.r.user, email: f.r.email };
+  writeRow(f.sh, f.r.row, f.r.date, e, owner, f.r.id);
+  return { ok: true };
+}
+
+function deleteEntry(me, d) {
+  const f = findOwned(me, d.id);
+  f.sh.deleteRow(f.r.row);
+  return { ok: true };
+}
+
+function recent(me) {
+  const rows = readRows(expensesSheet())
+    .filter(r => me.admin || r.email === me.email)
+    .sort((a, b) => b.date - a.date)
+    .slice(0, RECENT_LIMIT);
+  return { ok: true, entries: rows.map(toApi) };
+}
+
+function summary(me, d) {
+  const now = new Date();
+  const year = Number(d.year) || now.getFullYear();
+  const month = d.month !== undefined ? Number(d.month) : now.getMonth(); // 0-11
+  const start = new Date(year, month, 1), end = new Date(year, month + 1, 1);
+  const mine = d.scope === "me";
+
+  const rows = readRows(expensesSheet())
+    .filter(r => r.date >= start && r.date < end)
+    .filter(r => !mine || r.email === me.email);
+
+  let income = 0, expense = 0;
+  const expCats = {}, incCats = {}, people = {};
+  rows.forEach(r => {
+    const who = r.user || r.email || "Unknown";
+    people[who] = people[who] || { name: who, income: 0, expense: 0 };
+    if (r.type === "Income") {
+      income += r.amount;
+      incCats[r.category] = (incCats[r.category] || 0) + r.amount;
+      people[who].income += r.amount;
+    } else {
+      expense += r.amount;
+      expCats[r.category] = (expCats[r.category] || 0) + r.amount;
+      people[who].expense += r.amount;
+    }
+  });
+  const sorted = o => Object.keys(o).map(k => ({ name: k, amount: o[k] })).sort((a, b) => b.amount - a.amount);
+  return {
+    ok: true, year: year, month: month, scope: mine ? "me" : "family",
+    income: income, expense: expense, count: rows.length,
+    expense_categories: sorted(expCats),
+    income_categories: sorted(incCats),
+    people: Object.keys(people).map(k => people[k]).sort((a, b) => b.expense - a.expense)
+  };
+}
+
+// ----------------------------------------------------------------------------
+// SETUP: run once from the Apps Script editor (safe to re-run; keeps your data)
 // ----------------------------------------------------------------------------
 function setup() {
   setupLists();
@@ -125,36 +373,35 @@ function setupLists() {
   const ss = SpreadsheetApp.getActive();
   let lists = ss.getSheetByName("Lists");
   if (!lists) lists = ss.insertSheet("Lists");
-  lists.clear();
 
-  lists.getRange("A1:D1").setValues([["Expense Categories", "Income Categories", "Payment Methods", "Users"]])
+  lists.getRange("A1:D1").setValues([["Expense Categories", "Income Categories", "Payment Methods", "Family Emails"]])
     .setFontWeight("bold").setBackground("#E2E8F0");
 
-  const expRows = EXPENSE_CATEGORIES.map(c => [c]);
-  const incRows = INCOME_CATEGORIES.map(c => [c]);
-  const payRows = PAYMENT_METHODS.map(p => [p]);
-  const usrRows = [["Aneez"], ["User 1"]];
+  const fillIfEmpty = (colIdx, values) => {
+    const existing = lists.getRange(2, colIdx, Math.max(lists.getMaxRows() - 1, 1), 1).getValues()
+      .map(r => String(r[0]).trim()).filter(String);
+    if (!existing.length) lists.getRange(2, colIdx, values.length, 1).setValues(values.map(v => [v]));
+  };
+  fillIfEmpty(1, EXPENSE_CATEGORIES);
+  fillIfEmpty(2, INCOME_CATEGORIES);
+  fillIfEmpty(3, PAYMENT_METHODS);
 
-  lists.getRange(2, 1, expRows.length, 1).setValues(expRows);
-  lists.getRange(2, 2, incRows.length, 1).setValues(incRows);
-  lists.getRange(2, 3, payRows.length, 1).setValues(payRows);
-  lists.getRange(2, 4, usrRows.length, 1).setValues(usrRows);
+  // Old versions kept display names in column D; keep only email addresses now.
+  const emails = memberEmailsRaw(lists).filter(v => v.indexOf("@") > 0);
+  lists.getRange("D2:D").clearContent();
+  if (emails.length) lists.getRange(2, 4, emails.length, 1).setValues(emails.map(v => [v]));
+  lists.getRange("F1").setValue("Admin (script owner): " + adminEmail()).setFontColor("#64748B");
 
-  let log = ss.getSheetByName("Expenses");
-  if (!log) {
-    log = ss.insertSheet("Expenses");
-    log.getRange(1, 1, 1, 7).setValues([["Date", "Type", "Category", "Amount", "Payment", "User", "Net Amount"]]);
-    log.getRange(1, 1, 1, 7).setFontWeight("bold").setBackground("#F1F5F9");
-    log.setColumnWidth(1, 150); log.setColumnWidth(2, 100); log.setColumnWidth(3, 140);
-    log.setColumnWidth(4, 110); log.setColumnWidth(5, 110); log.setColumnWidth(6, 110); log.setColumnWidth(7, 120);
-  }
+  const log = expensesSheet();
+  log.setColumnWidth(1, 150); log.setColumnWidth(2, 100); log.setColumnWidth(3, 140);
+  log.setColumnWidth(4, 110); log.setColumnWidth(5, 110); log.setColumnWidth(6, 110); log.setColumnWidth(7, 120);
 
   // Soft validation
   const rule = c => SpreadsheetApp.newDataValidation()
     .requireValueInRange(lists.getRange(c + "2:" + c), true).setAllowInvalid(true).build();
   log.getRange("C2:C" + N).setDataValidation(rule("A"));
   log.getRange("E2:E" + N).setDataValidation(rule("C"));
-  log.getRange("F2:F" + N).setDataValidation(rule("D"));
+  log.getRange("F2:F" + N).clearDataValidations();
 
   return lists;
 }

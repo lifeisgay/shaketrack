@@ -4,26 +4,31 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@drawable/ic_tile"
         android:label="@string/app_name"
-        android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
+        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
 
-        <!-- Settings screen (URL, secret, tags) -->
+        <!-- Sign in, dashboard, recent entries, settings -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- The quick-entry popup. Triggered by volume gesture or tile. -->
+        <!-- The quick-entry popup. Opened by a shake, the notification or the tile. -->
         <activity
             android:name=".ExpenseActivity"
             android:exported="false"
@@ -35,19 +40,24 @@
             android:windowSoftInputMode="stateVisible|adjustResize"
             android:theme="@style/Theme.ExpenseTracker.Dialog" />
 
-        <!-- TRIGGER 1: triple-press volume down (Accessibility Service) -->
+        <!-- TRIGGER 1: shake the phone -->
         <service
-            android:name=".VolumeTriggerService"
-            android:exported="true"
-            android:label="@string/app_name"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/volume_service" />
+            android:name=".ShakeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Detects a phone shake so the user can quickly log an expense" />
         </service>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- TRIGGER 2: Quick Settings tile -->
         <service

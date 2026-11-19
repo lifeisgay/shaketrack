@@ -2,6 +2,7 @@ package com.example.expensetracker
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -17,7 +18,6 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
-import androidx.work.*
 
 /**
  * Modern 3-Section Financial Quick Entry Popup:
@@ -31,7 +31,6 @@ class ExpenseActivity : Activity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private var selectedPayment: String = "GPay"
-    private var selectedUser: String = "Aneez"
     private val paymentButtons = mutableListOf<TextView>()
     private lateinit var amountInput: EditText
     private lateinit var userPill: TextView
@@ -39,17 +38,21 @@ class ExpenseActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 27) setShowWhenLocked(true)
-        Sync.run(this)
+        if (!Prefs.isSignedIn(this)) {
+            Toast.makeText(this, "Open ShakeTrack and sign in with Google first", Toast.LENGTH_LONG).show()
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            finish()
+            return
+        }
+        Api.refreshLists(this)
 
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
 
         val payments = Prefs.payments(this)
         val expCategories = Prefs.expenseCategories(this)
         val incCategories = Prefs.incomeCategories(this)
-        val users = Prefs.users(this)
 
         selectedPayment = Prefs.lastPayment(this).ifEmpty { "GPay" }
-        selectedUser = Prefs.user(this)
 
         // Card Container
         val card = LinearLayout(this).apply {
@@ -75,22 +78,12 @@ class ExpenseActivity : Activity() {
         }
 
         userPill = TextView(this).apply {
-            text = "👤 $selectedUser ▾"
+            text = "👤 ${Prefs.name(this@ExpenseActivity).ifEmpty { "Me" }}"
             textSize = 12f
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             setTextColor(Color.parseColor("#4338CA"))
             setPadding(dp(12), dp(5), dp(12), dp(5))
             background = makePillDrawable(Color.parseColor("#EEF2FF"), dp(14).toFloat())
-            isClickable = true
-            setOnClickListener {
-                vibrate(25)
-                val currentIdx = users.indexOf(selectedUser)
-                val nextIdx = if (currentIdx in 0 until users.size - 1) currentIdx + 1 else 0
-                selectedUser = users.getOrElse(nextIdx) { "Aneez" }
-                Prefs.setUser(this@ExpenseActivity, selectedUser)
-                text = "👤 $selectedUser ▾"
-                Toast.makeText(this@ExpenseActivity, "User: $selectedUser", Toast.LENGTH_SHORT).show()
-            }
         }
         val userParams = RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.WRAP_CONTENT,
@@ -337,26 +330,11 @@ class ExpenseActivity : Activity() {
         vibrate(45)
 
         val sign = if (type == "Income") "+" else "-"
-        val data = workDataOf(
-            "amount" to value,
-            "type" to type,
-            "category" to category,
-            "payment" to selectedPayment,
-            "user" to selectedUser,
-            "ts" to System.currentTimeMillis()
-        )
-
-        val req = OneTimeWorkRequestBuilder<UploadWorker>()
-            .setInputData(data)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(this).enqueue(req)
+        UploadWorker.enqueue(this, value, type, category, selectedPayment)
 
         Toast.makeText(
             this,
-            "✓ Logged $sign₹$value · $category · $selectedPayment ($selectedUser)",
+            "✓ Saved $sign₹$value · $category · $selectedPayment",
             Toast.LENGTH_SHORT
         ).show()
 
