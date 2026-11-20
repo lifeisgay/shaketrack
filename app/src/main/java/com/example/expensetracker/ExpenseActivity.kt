@@ -38,7 +38,8 @@ class ExpenseActivity : Activity() {
 
         selectedPayment = Prefs.lastPayment(this).ifEmpty { "GPay" }
         val payments = Prefs.payments(this).let { if (selectedPayment in it) it else listOf(selectedPayment) + it }
-        val expTags = Prefs.byUsage(this, Prefs.expenseCategories(this))
+        val trTags = Prefs.transferCategories(this)
+        val expTags = Prefs.byUsage(this, Prefs.expenseCategories(this).filter { it !in trTags })
         val incTags = Prefs.byUsage(this, Prefs.incomeCategories(this))
 
         val sheet = LinearLayout(this).apply {
@@ -58,17 +59,21 @@ class ExpenseActivity : Activity() {
 
         // Top row: who is logging + close
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        top.addView(Ui.text(this, "👤  " + Prefs.name(this).ifEmpty { "Me" }, 14f, Ui.ACCENT, bold = true).apply {
-            setPadding(dp(14), dp(7), dp(14), dp(7))
+        val who = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(14), dp(6))
             background = Ui.round(this@ExpenseActivity, Ui.ACCENT_SOFT, 16)
-        })
+            addView(Ui.icon(this@ExpenseActivity, R.drawable.ic_person, Ui.ACCENT, 18))
+            addView(Ui.text(this@ExpenseActivity, Prefs.name(this@ExpenseActivity).ifEmpty { "Me" }, 14f, Ui.ACCENT).apply {
+                typeface = Ui.MEDIUM
+                setPadding(dp(6), 0, 0, 0)
+            })
+        }
+        top.addView(who)
         top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        top.addView(Ui.text(this, "✕", 20f, Ui.MUTED, bold = true).apply {
-            gravity = Gravity.CENTER
-            background = Ui.pressable(this@ExpenseActivity, Ui.SURFACE_2, 20)
-            contentDescription = "Close"
-            setOnClickListener { finish() }
-        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        top.addView(Ui.iconButton(this, R.drawable.ic_close, "Close", Ui.MUTED) { finish() },
+            LinearLayout.LayoutParams(dp(44), dp(44)))
         sheet.addView(top)
 
         // Big amount
@@ -101,22 +106,37 @@ class ExpenseActivity : Activity() {
         renderPayments()
 
         // Tags
-        sheet.addView(Ui.label(this, "Spent on", Ui.RED).apply { setPadding(dp(2), dp(18), 0, dp(8)) })
-        sheet.addView(tagGrid(expTags, income = false))
+        sheet.addView(Ui.label(this, "Expense").apply { setPadding(dp(2), dp(18), 0, dp(8)) })
+        sheet.addView(tagGrid(expTags, "Expense"))
         if (incTags.isNotEmpty()) {
-            sheet.addView(Ui.label(this, "Money in", Ui.GREEN).apply { setPadding(dp(2), dp(16), 0, dp(8)) })
-            sheet.addView(tagGrid(incTags, income = true))
+            sheet.addView(Ui.label(this, "Income").apply { setPadding(dp(2), dp(16), 0, dp(8)) })
+            sheet.addView(tagGrid(incTags, "Income"))
+        }
+        if (trTags.isNotEmpty()) {
+            sheet.addView(Ui.label(this, "Card bill").apply { setPadding(dp(2), dp(16), 0, dp(2)) })
+            sheet.addView(Ui.text(this, "Paying your card bill isn't counted as spending; the card purchases already were.", 13f, Ui.FAINT).apply {
+                setPadding(dp(2), 0, 0, dp(8))
+            })
+            sheet.addView(tagGrid(trTags, "Transfer"))
         }
 
+        // Full-screen translucent layer: dim scrim (tap to close) with the sheet at the bottom.
+        // Because the window is full-screen, adjustResize shrinks it above the keyboard and the
+        // sheet scrolls, so every tag stays reachable while typing the amount.
         val scroll = ScrollView(this).apply {
             isVerticalScrollBarEnabled = false
+            isFillViewport = false
             addView(sheet)
         }
-        setContentView(scroll)
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(0x99000000.toInt())
+            isClickable = true
+            setOnClickListener { finish() }
+            addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        }
+        sheet.isClickable = true // taps on the sheet don't reach the scrim
+        setContentView(root)
 
-        // Full-width sheet anchored to the bottom of the screen, above the keyboard
-        window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        window.setGravity(Gravity.BOTTOM)
         window.setSoftInputMode(
             WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         )
@@ -138,18 +158,24 @@ class ExpenseActivity : Activity() {
         }
     }
 
-    private fun tagGrid(tags: List<String>, income: Boolean): GridLayout {
+    /** Grid of one-tap tags. [type] is "Expense", "Income" or "Transfer" (card bill). */
+    private fun tagGrid(tags: List<String>, type: String): GridLayout {
         val grid = GridLayout(this).apply { columnCount = 3 }
+        val (fg, bg, line) = when (type) {
+            "Income" -> Triple(Ui.GREEN, Ui.GREEN_SOFT, Ui.GREEN_LINE)
+            "Transfer" -> Triple(Ui.BLUE, Ui.BLUE_SOFT, Ui.BLUE_LINE)
+            else -> Triple(Ui.TEXT, Ui.SURFACE_2, Ui.LINE)
+        }
         tags.forEach { tag ->
-            val btn = Ui.text(this, if (income) "+ $tag" else tag, 15f, if (income) Ui.GREEN else Ui.TEXT, bold = true).apply {
+            val btn = Ui.text(this, tag, 15f, fg).apply {
+                typeface = Ui.MEDIUM
                 gravity = Gravity.CENTER
                 maxLines = 2
                 minHeight = dp(54)
                 setPadding(dp(6), dp(8), dp(6), dp(8))
-                background = if (income) Ui.pressable(this@ExpenseActivity, Ui.GREEN_SOFT, 14, Ui.GREEN_LINE)
-                else Ui.pressable(this@ExpenseActivity, Ui.SURFACE_2, 14, Ui.LINE)
+                background = Ui.pressable(this@ExpenseActivity, bg, 14, line)
                 isClickable = true
-                setOnClickListener { save(if (income) "Income" else "Expense", tag) }
+                setOnClickListener { save(type, tag) }
             }
             grid.addView(btn, GridLayout.LayoutParams().apply {
                 width = 0
@@ -171,8 +197,12 @@ class ExpenseActivity : Activity() {
         Ui.vibrate(this, 45)
         UploadWorker.enqueue(this, value, type, category, selectedPayment)
         Prefs.countUse(this, category)
-        val signed = if (type == "Income") Ui.money(value, sign = true) else Ui.money(-value)
-        Toast.makeText(this, "✓ $signed · $category · $selectedPayment", Toast.LENGTH_SHORT).show()
+        val signed = when (type) {
+            "Income" -> Ui.money(value, sign = true)
+            "Transfer" -> Ui.money(value)
+            else -> Ui.money(-value)
+        }
+        Toast.makeText(this, "Saved  $signed  ·  $category  ·  $selectedPayment", Toast.LENGTH_SHORT).show()
         finish()
     }
 }

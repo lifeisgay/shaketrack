@@ -31,7 +31,6 @@ const EXPENSE_CATEGORIES = [
   "Snacks and tea",
   "Medicine",
   "F99 expense",
-  "Card payment",
   "Miscellaneous"
 ];
 
@@ -40,6 +39,12 @@ const INCOME_CATEGORIES = [
   "F99 payment",
   "Borrowed",
   "Income"
+];
+
+// Paying a credit-card bill is not spending (the card purchases were already logged
+// as expenses), so these are recorded as type "Transfer" and left out of all totals.
+const TRANSFER_CATEGORIES = [
+  "Card payment"
 ];
 
 const PAYMENT_METHODS = [
@@ -212,11 +217,12 @@ function listsSheet() {
 function readLists() {
   const l = listsSheet();
   const col = c => l.getRange(c + "2:" + c).getValues().map(r => String(r[0]).trim()).filter(String);
-  const exp = col("A"), inc = col("B"), pay = col("C");
+  const exp = col("A"), inc = col("B"), pay = col("C"), tr = col("E");
   return {
     expense_categories: exp.length ? exp : EXPENSE_CATEGORIES,
     income_categories: inc.length ? inc : INCOME_CATEGORIES,
-    payments: pay.length ? pay : PAYMENT_METHODS
+    payments: pay.length ? pay : PAYMENT_METHODS,
+    transfer_categories: tr.length ? tr : TRANSFER_CATEGORIES
   };
 }
 
@@ -253,7 +259,7 @@ function readRows(sh) {
   return vals.map((v, i) => ({
     row: i + 2,
     date: v[COL.DATE - 1] instanceof Date ? v[COL.DATE - 1] : new Date(v[COL.DATE - 1]),
-    type: String(v[COL.TYPE - 1]) === "Income" ? "Income" : "Expense",
+    type: normType(String(v[COL.TYPE - 1])),
     category: String(v[COL.CAT - 1]),
     amount: Math.abs(Number(v[COL.AMT - 1]) || 0),
     payment: String(v[COL.PAY - 1]),
@@ -270,8 +276,12 @@ function toApi(r) {
   };
 }
 
+function normType(t) {
+  return t === "Income" || t === "Transfer" ? t : "Expense";
+}
+
 function cleanEntry(d) {
-  const type = d.type === "Income" ? "Income" : "Expense";
+  const type = normType(d.type);
   const amount = Math.abs(Number(d.amount) || 0);
   if (!(amount > 0)) throw new ApiError("Amount must be more than 0");
   const category = String(d.category || "").trim() || (type === "Income" ? "Income" : "Miscellaneous");
@@ -282,7 +292,7 @@ function cleanEntry(d) {
 function writeRow(sh, row, date, e, me, id) {
   sh.getRange(row, 1, 1, COL.EMAIL).setValues([[
     date, e.type, e.category, e.amount, e.payment, me.name,
-    e.type === "Income" ? e.amount : -e.amount, id, me.email
+    e.type === "Income" ? e.amount : e.type === "Transfer" ? 0 : -e.amount, id, me.email
   ]]);
   sh.getRange(row, COL.DATE).setNumberFormat("dd-mmm-yyyy hh:mm");
   sh.getRange(row, COL.AMT).setNumberFormat('"₹"#,##0.00');
@@ -343,17 +353,20 @@ function summary(me, d) {
     .filter(r => r.date >= start && r.date < end)
     .filter(r => !mine || r.email === me.email);
 
-  let income = 0, expense = 0;
+  let income = 0, expense = 0, transfer = 0, cardSpent = 0;
   const expCats = {}, incCats = {}, people = {};
   rows.forEach(r => {
     const who = r.user || r.email || "Unknown";
     people[who] = people[who] || { name: who, income: 0, expense: 0 };
-    if (r.type === "Income") {
+    if (r.type === "Transfer") {
+      transfer += r.amount; // card bill paid: not income, not spending
+    } else if (r.type === "Income") {
       income += r.amount;
       incCats[r.category] = (incCats[r.category] || 0) + r.amount;
       people[who].income += r.amount;
     } else {
       expense += r.amount;
+      if (/card/i.test(r.payment)) cardSpent += r.amount;
       expCats[r.category] = (expCats[r.category] || 0) + r.amount;
       people[who].expense += r.amount;
     }
@@ -362,6 +375,7 @@ function summary(me, d) {
   return {
     ok: true, year: year, month: month, scope: mine ? "me" : "family",
     income: income, expense: expense, count: rows.length,
+    card_spent: cardSpent, card_paid: transfer,
     expense_categories: sorted(expCats),
     income_categories: sorted(incCats),
     people: Object.keys(people).map(k => people[k]).sort((a, b) => b.expense - a.expense)
@@ -383,12 +397,37 @@ function setup() {
   if (dash) { ss.setActiveSheet(dash); ss.moveActiveSheet(1); }
 }
 
+/**
+ * Card-bill tags used to be expense tags. Take them out of the expense list and turn
+ * existing rows with those tags into "Transfer" rows (net 0), so they stop counting.
+ */
+function migrateTransfers(lists) {
+  const tr = lists.getRange("E2:E").getValues().map(r => String(r[0]).trim()).filter(String);
+  if (!tr.length) return;
+  const exp = lists.getRange("A2:A").getValues().map(r => String(r[0]).trim()).filter(String);
+  const keep = exp.filter(v => tr.indexOf(v) < 0);
+  if (keep.length !== exp.length) {
+    lists.getRange("A2:A").clearContent();
+    if (keep.length) lists.getRange(2, 1, keep.length, 1).setValues(keep.map(v => [v]));
+  }
+  const sh = expensesSheet();
+  const last = lastDataRow(sh);
+  if (last < 2) return;
+  const vals = sh.getRange(2, COL.TYPE, last - 1, 2).getValues(); // Type, Category
+  vals.forEach((v, i) => {
+    if (v[0] === "Expense" && tr.indexOf(String(v[1]).trim()) >= 0) {
+      sh.getRange(i + 2, COL.TYPE).setValue("Transfer");
+      sh.getRange(i + 2, COL.NET).setValue(0);
+    }
+  });
+}
+
 function setupLists() {
   const ss = book();
   let lists = ss.getSheetByName("Lists");
   if (!lists) lists = ss.insertSheet("Lists");
 
-  lists.getRange("A1:D1").setValues([["Expense Categories", "Income Categories", "Payment Methods", "Family Emails"]])
+  lists.getRange("A1:E1").setValues([["Expense Categories", "Income Categories", "Payment Methods", "Family Emails", "Card Bills (not spending)"]])
     .setFontWeight("bold").setBackground("#E2E8F0");
 
   const fillIfEmpty = (colIdx, values) => {
@@ -399,6 +438,8 @@ function setupLists() {
   fillIfEmpty(1, EXPENSE_CATEGORIES);
   fillIfEmpty(2, INCOME_CATEGORIES);
   fillIfEmpty(3, PAYMENT_METHODS);
+  fillIfEmpty(5, TRANSFER_CATEGORIES);
+  migrateTransfers(lists);
 
   // Old versions kept display names in column D; keep only email addresses now.
   const emails = memberEmailsRaw(lists).filter(v => v.indexOf("@") > 0);
@@ -413,7 +454,7 @@ function setupLists() {
   // Soft validation
   const rule = c => SpreadsheetApp.newDataValidation()
     .requireValueInRange(lists.getRange(c + "2:" + c), true).setAllowInvalid(true).build();
-  log.getRange("C2:C" + N).setDataValidation(rule("A"));
+  log.getRange("C2:C" + N).clearDataValidations(); // categories come from Lists A, B and E
   log.getRange("E2:E" + N).setDataValidation(rule("C"));
   log.getRange("F2:F" + N).clearDataValidations();
 
@@ -509,6 +550,14 @@ function buildDashboard() {
   d.getRange("L9").setValue("Savings").setFontSize(9).setFontWeight("bold").setFontColor(GREEN);
   d.getRange("M9:N9").merge().setFormula(`=IFERROR(SPARKLINE(MAX(0,I7),{"charttype","bar";"max",MAX(B7,E7,1);"color1","${GREEN}"}),"")`);
   d.getRange("L6:N9").setBorder(true, true, true, true, false, false, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
+
+  // Credit card: spending on the card vs. bills paid (bills are not counted as expenses)
+  const payCol = `Expenses!$E$2:$E$${N}`;
+  d.getRange("B10:N10").merge().setFormula(
+    `="Credit card this month:  spent " & TEXT(IFERROR(SUMIFS(${amtCol},${typeCol},"Expense",${payCol},"Card",${inMonth}),0),"#,##0") & ` +
+    `"   ·   bills paid " & TEXT(IFERROR(SUMIFS(${amtCol},${typeCol},"Transfer",${inMonth}),0),"#,##0") & ` +
+    `"   (bill payments are not counted as expenses)"`
+  ).setFontColor("#475569").setFontSize(9).setFontStyle("italic");
 
   // ==========================================================================
   // BREAKDOWN TABLES — category rows come live from the Lists tab, so adding,
@@ -691,6 +740,14 @@ function buildAnnualDashboard() {
   a.getRange(pctRow, 1).setValue("SAVINGS RATE %");
   a.getRange(pctRow, 2, 1, 13).setFormulas([pct]).setNumberFormat("0.0%");
   a.getRange(pctRow, 1, 1, 14).setFontWeight("bold").setBackground("#F0FDF4").setFontColor("#15803D");
+
+  const cardRow = pctRow + 1, card = [];
+  for (let m = 0; m < 12; m++) card.push(`=IFERROR(SUMIFS(${amtCol},${typeCol},"Transfer",${inMonth(m)}), 0)`);
+  card.push(`=SUM(B${cardRow}:M${cardRow})`);
+  a.getRange(cardRow, 1).setValue("CARD BILLS PAID (not spending)");
+  a.getRange(cardRow, 2, 1, 13).setFormulas([card]).setNumberFormat(INR);
+  a.getRange(cardRow, 1, 1, 14).setFontStyle("italic").setFontColor("#475569").setBackground("#F8FAFC");
+  a.getRange(cardRow, 1, 1, 14).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
 
   a.getRange(6, 2, netRow - 5, 13).setNumberFormat(INR);
   a.getRange(pctRow, 2, 1, 13).setNumberFormat("0.0%");

@@ -111,7 +111,9 @@ class MainActivity : Activity() {
         holder.removeAllViews()
         holder.addView(Ui.card(this).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(Ui.text(this@MainActivity, "📡", 32f).apply { gravity = Gravity.CENTER })
+            addView(Ui.icon(this@MainActivity, R.drawable.ic_cloud_off, Ui.MUTED, 36).apply {
+                (layoutParams as LinearLayout.LayoutParams).gravity = Gravity.CENTER_HORIZONTAL
+            })
             addView(Ui.text(this@MainActivity, msg, 16f, Ui.MUTED).apply {
                 gravity = Gravity.CENTER
                 setPadding(0, dp(8), 0, dp(14))
@@ -125,6 +127,14 @@ class MainActivity : Activity() {
     // Sign-in / not configured
     // =========================================================================
 
+    /** Logo mark + wordmark. */
+    private fun brandRow(sizeSp: Float) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(Ui.logo(this@MainActivity, 32))
+        addView(Ui.text(this@MainActivity, "ShakeTrack", sizeSp, bold = true).apply { setPadding(dp(12), 0, 0, 0) })
+    }
+
     private fun page() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(24), dp(32), dp(24), dp(32))
@@ -132,7 +142,7 @@ class MainActivity : Activity() {
 
     private fun notConfiguredScreen() {
         val root = page()
-        root.addView(Ui.text(this, "⚡ ShakeTrack", 28f, bold = true))
+        root.addView(brandRow(28f))
         root.addView(Ui.card(this).apply {
             addView(Ui.text(this@MainActivity,
                 "This build isn't connected to a sheet yet.\n\nFill in script_url and google_web_client_id in app/src/main/res/values/config.xml, then rebuild.",
@@ -145,7 +155,7 @@ class MainActivity : Activity() {
         navItems.clear()
         val root = page().apply { gravity = Gravity.CENTER_HORIZONTAL }
         root.addView(Ui.space(this, 56))
-        root.addView(Ui.text(this, "⚡", 56f).apply { gravity = Gravity.CENTER })
+        root.addView(Ui.logo(this, 72).apply { (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(20) })
         root.addView(Ui.text(this, "ShakeTrack", 32f, bold = true).apply { gravity = Gravity.CENTER })
         root.addView(Ui.text(this, "Family expenses in one Google Sheet.\nShake your phone, type the amount, tap a tag.", 16f, Ui.MUTED).apply {
             gravity = Gravity.CENTER
@@ -203,9 +213,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(20), dp(20), dp(6))
         }
-        header.addView(Ui.text(this, "⚡ ShakeTrack", 24f, bold = true))
+        header.addView(brandRow(22f))
         val who = Prefs.name(this).ifEmpty { Prefs.email(this) } + if (Prefs.isAdmin(this)) "  ·  Admin" else ""
-        header.addView(Ui.text(this, who, 14f, Ui.MUTED).apply { setPadding(0, dp(2), 0, 0) })
+        header.addView(Ui.text(this, who, 14f, Ui.MUTED).apply { setPadding(dp(44), 0, 0, 0) })
         column.addView(header)
 
         body = LinearLayout(this).apply {
@@ -222,33 +232,40 @@ class MainActivity : Activity() {
             setBackgroundColor(Ui.SURFACE)
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        listOf("📊" to "Home", "🧾" to "Recent", "⚙️" to "Settings").forEachIndexed { i, (icon, label) ->
+        listOf(R.drawable.ic_home to "Home", R.drawable.ic_list to "Recent", R.drawable.ic_settings to "Settings").forEachIndexed { i, (icon, label) ->
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(0, dp(6), 0, dp(6))
                 isClickable = true
+                contentDescription = label
                 setOnClickListener { showTab(i) }
-                addView(Ui.text(this@MainActivity, icon, 20f).apply { gravity = Gravity.CENTER })
-                addView(Ui.text(this@MainActivity, label, 13f, Ui.MUTED, bold = true).apply { gravity = Gravity.CENTER })
+                // Pill indicator behind the icon (Material 3 navigation bar)
+                addView(FrameLayout(this@MainActivity).apply {
+                    addView(Ui.icon(this@MainActivity, icon, Ui.MUTED), FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+                }, LinearLayout.LayoutParams(dp(64), dp(32)))
+                addView(Ui.text(this@MainActivity, label, 12f, Ui.MUTED).apply {
+                    typeface = Ui.MEDIUM
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(4), 0, 0)
+                })
             }
             navItems.add(item)
-            nav.addView(item, LinearLayout.LayoutParams(0, dp(62), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(64), 1f))
         }
         column.addView(View(this).apply { setBackgroundColor(Ui.LINE) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
         column.addView(nav)
         frame.addView(column)
 
         // Floating + button, bottom-right above the bar
-        val fab = Ui.text(this, "+", 32f, 0xFFFFFFFF.toInt(), bold = true).apply {
+        val fab = FrameLayout(this).apply {
             this@MainActivity.fab = this
-            gravity = Gravity.CENTER
-            background = Ui.pressable(this@MainActivity, Ui.ACCENT_STRONG, 32)
+            addView(Ui.icon(this@MainActivity, R.drawable.ic_add, 0xFFFFFFFF.toInt(), 28), FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+            background = Ui.pressable(this@MainActivity, Ui.ACCENT_STRONG, 18)
             elevation = dp(8).toFloat()
             contentDescription = "Add entry"
             setOnClickListener { startActivity(Intent(this@MainActivity, ExpenseActivity::class.java)) }
         }
-        frame.addView(fab, FrameLayout.LayoutParams(dp(64), dp(64)).apply {
+        frame.addView(fab, FrameLayout.LayoutParams(dp(60), dp(60)).apply {
             gravity = Gravity.BOTTOM or Gravity.END
             rightMargin = dp(20)
             bottomMargin = dp(92)
@@ -262,8 +279,13 @@ class MainActivity : Activity() {
         tab = i
         navItems.forEachIndexed { idx, item ->
             val on = idx == i
-            item.background = if (on) Ui.round(this, Ui.ACCENT_SOFT, 16) else null
-            (item.getChildAt(1) as TextView).setTextColor(if (on) Ui.ACCENT else Ui.MUTED)
+            val pill = item.getChildAt(0) as FrameLayout
+            pill.background = if (on) Ui.round(this, Ui.ACCENT_SOFT, 16) else null
+            (pill.getChildAt(0) as ImageView).imageTintList = android.content.res.ColorStateList.valueOf(if (on) Ui.ACCENT else Ui.MUTED)
+            (item.getChildAt(1) as TextView).apply {
+                setTextColor(if (on) Ui.TEXT else Ui.MUTED)
+                typeface = if (on) Ui.BOLD else Ui.MEDIUM
+            }
         }
         fab?.visibility = if (i == 2) View.GONE else View.VISIBLE // not needed on Settings
         body.removeAllViews()
@@ -291,10 +313,12 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, dp(10))
         }
         val monthLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(month.time)
-        nav.addView(arrow("‹") { month.add(Calendar.MONTH, -1); showTab(0) })
+        nav.addView(Ui.iconButton(this, R.drawable.ic_chevron_left, "Previous month") { month.add(Calendar.MONTH, -1); showTab(0) },
+            LinearLayout.LayoutParams(dp(48), dp(48)))
         nav.addView(Ui.text(this, monthLabel, 19f, bold = true).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        nav.addView(arrow("›") { month.add(Calendar.MONTH, 1); showTab(0) })
+        nav.addView(Ui.iconButton(this, R.drawable.ic_chevron_right, "Next month") { month.add(Calendar.MONTH, 1); showTab(0) },
+            LinearLayout.LayoutParams(dp(48), dp(48)))
         body.addView(nav)
 
         // Family / Only me
@@ -320,13 +344,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun arrow(t: String, onClick: () -> Unit) = Ui.text(this, t, 26f, Ui.ACCENT, bold = true).apply {
-        gravity = Gravity.CENTER
-        background = Ui.pressable(this@MainActivity, Ui.SURFACE, 14, Ui.LINE)
-        layoutParams = LinearLayout.LayoutParams(dp(52), dp(48))
-        setOnClickListener { onClick() }
-    }
-
     private fun fillDashboard(holder: LinearLayout, j: JSONObject) {
         val income = j.optDouble("income", 0.0)
         val expense = j.optDouble("expense", 0.0)
@@ -336,29 +353,49 @@ class MainActivity : Activity() {
         // Hero: what's left this month
         val hero = Ui.card(this).apply { background = Ui.round(this@MainActivity, Ui.ACCENT_SOFT, 22, Ui.LINE) }
         hero.addView(Ui.label(this, "Left this month", Ui.ACCENT).apply { setPadding(0, 0, 0, dp(4)) })
-        hero.addView(Ui.text(this, Ui.money(left), 38f, if (left >= 0) Ui.TEXT else Ui.RED, bold = true))
+        hero.addView(Ui.amount(this, Ui.money(left), 38f, if (left >= 0) Ui.TEXT else Ui.RED))
         val rate = if (income > 0) "${((left / income) * 100).toInt()}% of income saved" else "No income logged yet"
         hero.addView(Ui.text(this, "$rate  ·  $count entries", 14f, Ui.MUTED).apply { setPadding(0, dp(4), 0, 0) })
         holder.addView(hero)
 
         // Income / Spent
-        val kpis = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        kpis.addView(kpi("Money in", income, Ui.GREEN), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(10) })
+        val kpis = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(12), 0, 0) // the cards' own margins are replaced by the weight params
+        }
+        kpis.addView(kpi("Income", income, Ui.GREEN), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(10) })
         kpis.addView(kpi("Spent", expense, Ui.RED), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         holder.addView(kpis)
 
+        // Credit card: spending on the card vs. bills paid (bills aren't counted as expenses)
+        val cardSpent = j.optDouble("card_spent", 0.0)
+        val cardPaid = j.optDouble("card_paid", 0.0)
+        if (cardSpent > 0 || cardPaid > 0) {
+            val c = Ui.card(this)
+            val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            head.addView(Ui.icon(this, R.drawable.ic_card, Ui.BLUE, 20))
+            head.addView(Ui.label(this, "Credit card").apply { setPadding(dp(10), 0, 0, 0) })
+            c.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
+            c.addView(lineItem("Spent on card", cardSpent, Ui.TEXT))
+            c.addView(lineItem("Bills paid", cardPaid, Ui.BLUE))
+            c.addView(Ui.text(this, "Bill payments settle earlier card spending, so they aren't counted as expenses.", 13f, Ui.FAINT).apply {
+                setPadding(0, dp(8), 0, 0)
+            })
+            holder.addView(c)
+        }
+
         if (count == 0) {
             holder.addView(Ui.card(this).apply {
-                addView(Ui.text(this@MainActivity, "Nothing logged this month yet.\nShake your phone or tap + to add the first one.", 16f, Ui.MUTED).apply {
+                addView(Ui.text(this@MainActivity, "Nothing logged this month yet.\nShake your phone or tap the add button to log the first one.", 16f, Ui.MUTED).apply {
                     setLineSpacing(0f, 1.2f)
                 })
             })
             return
         }
 
-        holder.addView(breakdown("Where the money went", j.optJSONArray("expense_categories"), expense, Ui.RED))
+        holder.addView(breakdown("Spending by category", j.optJSONArray("expense_categories"), expense, Ui.RED))
         val inc = j.optJSONArray("income_categories")
-        if (inc != null && inc.length() > 0) holder.addView(breakdown("Money in", inc, income, Ui.GREEN))
+        if (inc != null && inc.length() > 0) holder.addView(breakdown("Income by category", inc, income, Ui.GREEN))
 
         val people = j.optJSONArray("people")
         if (!mineOnly && people != null && people.length() > 1) {
@@ -375,9 +412,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun lineItem(label: String, value: Double, color: Int) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, dp(6), 0, dp(6))
+        addView(Ui.text(this@MainActivity, label, 16f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(Ui.amount(this@MainActivity, Ui.money(value), 16f, color))
+    }
+
     private fun kpi(label: String, value: Double, color: Int) = Ui.card(this).apply {
         addView(Ui.label(this@MainActivity, label, color).apply { setPadding(0, 0, 0, dp(4)) })
-        addView(Ui.text(this@MainActivity, Ui.money(value), 22f, bold = true).apply { maxLines = 1 })
+        addView(Ui.amount(this@MainActivity, Ui.money(value), 22f))
     }
 
     private fun breakdown(heading: String, arr: JSONArray?, total: Double, color: Int): View {
@@ -398,7 +443,7 @@ class MainActivity : Activity() {
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         top.addView(Ui.text(this, label, 16f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(Ui.text(this, note, 13f, Ui.MUTED).apply { setPadding(0, 0, dp(12), 0) })
-        top.addView(Ui.text(this, Ui.money(amount), 16f, bold = true))
+        top.addView(Ui.amount(this, Ui.money(amount), 16f))
         row.addView(top)
         val f = frac.coerceIn(0.0, 1.0).toFloat()
         val track = LinearLayout(this).apply {
@@ -436,7 +481,7 @@ class MainActivity : Activity() {
         launch({ showError(list, it) }) {
             val pending = withContext(Dispatchers.IO) { UploadWorker.pendingCount(this@MainActivity) }
             if (pending > 0) {
-                pendingNote.text = "⏳  $pending saved on this phone, waiting for internet to upload"
+                pendingNote.text = "$pending ${if (pending == 1) "entry is" else "entries are"} saved on this phone and will upload when you're online."
                 pendingNote.visibility = View.VISIBLE
             }
             val j = Api.call(this@MainActivity, "recent")
@@ -463,7 +508,9 @@ class MainActivity : Activity() {
     }
 
     private fun entryRow(e: JSONObject, fmt: SimpleDateFormat): View {
-        val income = e.optString("type") == "Income"
+        val type = e.optString("type")
+        val income = type == "Income"
+        val transfer = type == "Transfer"
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -474,17 +521,28 @@ class MainActivity : Activity() {
             setOnClickListener { editDialog(e) }
             setOnLongClickListener { Ui.vibrate(this@MainActivity, 30); confirmDelete(e, null); true }
         }
-        // Colored dot: green = money in, red = spent
-        row.addView(View(this).apply { background = Ui.round(this@MainActivity, if (income) Ui.GREEN else Ui.RED, 6) },
-            LinearLayout.LayoutParams(dp(10), dp(10)).apply { rightMargin = dp(14) })
+        // Letter avatar tinted by type: green income, blue card bill, neutral expense
+        val (fg, bg) = when {
+            income -> Ui.GREEN to Ui.GREEN_SOFT
+            transfer -> Ui.BLUE to Ui.BLUE_SOFT
+            else -> Ui.TEXT to Ui.SURFACE_2
+        }
+        row.addView(Ui.avatar(this, e.optString("category"), fg, bg).apply {
+            (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(14)
+        })
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(Ui.text(this, e.optString("category"), 17f, bold = true))
+        left.addView(Ui.text(this, e.optString("category"), 16f).apply { typeface = Ui.MEDIUM })
         val meta = mutableListOf(fmt.format(Date(e.optLong("ts"))).substringAfter(", "), e.optString("payment"))
+        if (transfer) meta.add("card bill")
         if (Prefs.isAdmin(this) && e.optString("email") != Prefs.email(this)) meta.add(e.optString("user"))
         left.addView(Ui.text(this, meta.filter { it.isNotEmpty() }.joinToString("  ·  "), 14f, Ui.MUTED).apply { setPadding(0, dp(2), 0, 0) })
         row.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val amt = e.optDouble("amount")
-        row.addView(Ui.text(this, if (income) Ui.money(amt, sign = true) else Ui.money(-amt), 18f, if (income) Ui.GREEN else Ui.RED, bold = true))
+        row.addView(when {
+            income -> Ui.amount(this, Ui.money(amt, sign = true), 17f, Ui.GREEN)
+            transfer -> Ui.amount(this, Ui.money(amt), 17f, Ui.BLUE)
+            else -> Ui.amount(this, Ui.money(-amt), 17f, Ui.TEXT)
+        })
         return row.also {
             it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
         }
@@ -507,13 +565,18 @@ class MainActivity : Activity() {
     }
 
     private fun editDialog(e: JSONObject) {
-        val expCats = Prefs.expenseCategories(this)
-        val incCats = Prefs.incomeCategories(this)
+        // One list of (type, category); the current one is kept even if it was removed from Lists
         val curCat = e.optString("category")
-        val curIncome = e.optString("type") == "Income"
-        val exp = if (!curIncome && curCat !in expCats) expCats + curCat else expCats
-        val inc = if (curIncome && curCat !in incCats) incCats + curCat else incCats
-        val labels = exp + inc.map { "+ $it" }
+        val curType = e.optString("type").ifEmpty { "Expense" }
+        val trCats = Prefs.transferCategories(this)
+        val options = mutableListOf<Pair<String, String>>()
+        Prefs.expenseCategories(this).filter { it !in trCats }.forEach { options.add("Expense" to it) }
+        Prefs.incomeCategories(this).forEach { options.add("Income" to it) }
+        trCats.forEach { options.add("Transfer" to it) }
+        if ((curType to curCat) !in options) options.add(curType to curCat)
+        val labels = options.map { (t, c) ->
+            when (t) { "Income" -> "$c  (income)"; "Transfer" -> "$c  (card bill)"; else -> c }
+        }
         val pays = Prefs.payments(this).let { if (e.optString("payment") in it) it else it + e.optString("payment") }
 
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
@@ -526,7 +589,7 @@ class MainActivity : Activity() {
         form.addView(Ui.label(this, "Category").apply { setPadding(0, dp(16), 0, dp(6)) })
         val cat = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, labels)
-            setSelection(if (curIncome) exp.size + inc.indexOf(curCat) else exp.indexOf(curCat))
+            setSelection(options.indexOf(curType to curCat).coerceAtLeast(0))
             minimumHeight = dp(50)
         }
         form.addView(cat)
@@ -549,18 +612,16 @@ class MainActivity : Activity() {
             dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val value = amount.text.toString().trim().toDoubleOrNull()
                 if (value == null || value <= 0) { amount.error = "Enter an amount"; return@setOnClickListener }
-                val idx = cat.selectedItemPosition
-                val isIncome = idx >= exp.size
-                val category = if (isIncome) inc[idx - exp.size] else exp[idx]
+                val (newType, category) = options[cat.selectedItemPosition]
                 launch {
                     Api.call(this@MainActivity, "update", JSONObject()
                         .put("id", e.optString("id"))
                         .put("amount", value)
-                        .put("type", if (isIncome) "Income" else "Expense")
+                        .put("type", newType)
                         .put("category", category)
                         .put("payment", pay.selectedItem as String))
                     dlg.dismiss()
-                    toast("✓ Updated")
+                    toast("Updated")
                     showTab(1)
                 }
             }
@@ -654,14 +715,12 @@ class MainActivity : Activity() {
             else Ui.pressable(this@MainActivity, Ui.SURFACE_2, 14, Ui.LINE)
             if (!done) setOnClickListener { onClick() }
         }
-        row.addView(Ui.text(this, if (done) "✓" else "!", 18f, if (done) Ui.GREEN else Ui.AMBER, bold = true).apply {
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.WRAP_CONTENT))
-        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
+        row.addView(Ui.icon(this, if (done) R.drawable.ic_check else R.drawable.ic_info, if (done) Ui.GREEN else Ui.AMBER, 22))
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
         texts.addView(Ui.text(this, title, 16f, bold = true))
         texts.addView(Ui.text(this, hint, 13f, Ui.MUTED))
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (!done) row.addView(Ui.text(this, "›", 22f, Ui.MUTED, bold = true))
+        if (!done) row.addView(Ui.icon(this, R.drawable.ic_chevron_right, Ui.MUTED, 22))
         return row.also {
             it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
         }
@@ -687,7 +746,7 @@ class MainActivity : Activity() {
                 val j = Api.call(this@MainActivity, "member_add", JSONObject().put("email", v))
                 email.setText("")
                 fillMembers(list, j)
-                toast("✓ $v can now sign in")
+                toast("$v can now sign in")
             }
         }.apply { setPadding(dp(22), 0, dp(22), 0) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(50)))
         c.addView(addRow)

@@ -14,6 +14,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.util.Locale
@@ -41,6 +43,8 @@ object Ui {
     val GREEN_SOFT = 0xFF14332A.toInt()
     val GREEN_LINE = 0xFF1F5A44.toInt()
     val BLUE = 0xFF6CB2FF.toInt()
+    val BLUE_SOFT = 0xFF14263F.toInt()
+    val BLUE_LINE = 0xFF244A75.toInt()
     val AMBER = 0xFFFBBF24.toInt()
     val AMBER_SOFT = 0xFF3A2E12.toInt()
 
@@ -68,10 +72,52 @@ object Ui {
         includeFontPadding = true
     }
 
-    fun label(c: Context, t: String, color: Int = MUTED) = text(c, t.uppercase(), 12f, color, bold = true).apply {
-        letterSpacing = 0.08f
+    /** Section heading: sentence case, medium weight, quiet color. */
+    fun label(c: Context, t: String, color: Int = MUTED) = text(c, t, 14f, color).apply {
+        typeface = MEDIUM
+        letterSpacing = 0.01f
         setPadding(0, dp(c, 4), 0, dp(c, 10))
     }
+
+    /** Money text with tabular (aligned) digits. */
+    fun amount(c: Context, t: CharSequence, sizeSp: Float, color: Int = TEXT) = text(c, t, sizeSp, color, bold = true).apply {
+        fontFeatureSettings = "tnum"
+        maxLines = 1
+    }
+
+    /** A tinted vector icon. */
+    fun icon(c: Context, res: Int, color: Int, sizeDp: Int = 24) = ImageView(c).apply {
+        setImageResource(res)
+        imageTintList = ColorStateList.valueOf(color)
+        layoutParams = LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp))
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    /** Round icon button with a 48dp touch target. */
+    fun iconButton(c: Context, res: Int, description: String, color: Int = TEXT, bg: Int = SURFACE_2, onClick: () -> Unit) =
+        FrameLayout(c).apply {
+            background = pressable(c, bg, 24, LINE)
+            contentDescription = description
+            isClickable = true
+            setOnClickListener { onClick() }
+            addView(icon(c, res, color, 22), FrameLayout.LayoutParams(dp(c, 22), dp(c, 22), Gravity.CENTER))
+        }
+
+    /** App mark: bolt in a rounded indigo square. */
+    fun logo(c: Context, sizeDp: Int) = FrameLayout(c).apply {
+        background = round(c, ACCENT_STRONG, sizeDp / 4)
+        addView(icon(c, R.drawable.ic_bolt, 0xFFFFFFFF.toInt(), sizeDp * 3 / 5),
+            FrameLayout.LayoutParams(dp(c, sizeDp * 3 / 5), dp(c, sizeDp * 3 / 5), Gravity.CENTER))
+        layoutParams = LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp))
+    }
+
+    /** Rounded square with the first letter of a name (used for entry rows). */
+    fun avatar(c: Context, name: String, fg: Int, bg: Int, sizeDp: Int = 42) =
+        text(c, name.trim().take(1).uppercase().ifEmpty { "?" }, 17f, fg, bold = true).apply {
+            gravity = Gravity.CENTER
+            background = round(c, bg, 12)
+            layoutParams = LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp))
+        }
 
     fun card(c: Context, topMarginDp: Int = 12) = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL

@@ -8,9 +8,10 @@ import org.json.JSONObject
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    private const val DEFAULT_EXPENSES = "Food,Fuel,Transport,Groceries,Rent,Snacks and tea,Medicine,F99 expense,Card payment,Miscellaneous"
+    private const val DEFAULT_EXPENSES = "Food,Fuel,Transport,Groceries,Rent,Snacks and tea,Medicine,F99 expense,Miscellaneous"
     private const val DEFAULT_INCOMES = "Salary,F99 payment,Borrowed,Income"
     private const val DEFAULT_PAYMENTS = "GPay,Card,Cash"
+    private const val DEFAULT_TRANSFERS = "Card payment"
 
     private fun list(s: String) = s.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
@@ -45,6 +46,8 @@ object Prefs {
     // --- Category lists cached from the sheet ---
     fun expenseCategories(c: Context): List<String> = list(sp(c).getString("expense_categories", DEFAULT_EXPENSES) ?: DEFAULT_EXPENSES)
     fun incomeCategories(c: Context): List<String> = list(sp(c).getString("income_categories", DEFAULT_INCOMES) ?: DEFAULT_INCOMES)
+    /** Card-bill tags: recorded, but not counted as spending (see Code.gs). */
+    fun transferCategories(c: Context): List<String> = list(sp(c).getString("transfer_categories", DEFAULT_TRANSFERS) ?: DEFAULT_TRANSFERS)
     fun payments(c: Context): List<String> = list(sp(c).getString("payments", DEFAULT_PAYMENTS) ?: DEFAULT_PAYMENTS)
 
     /** Saves lists from a "login" or "lists" response. */
@@ -58,6 +61,7 @@ object Prefs {
         join("expense_categories")?.let { e.putString("expense_categories", it) }
         join("income_categories")?.let { e.putString("income_categories", it) }
         join("payments")?.let { e.putString("payments", it) }
+        join("transfer_categories")?.let { e.putString("transfer_categories", it) }
         e.apply()
     }
 
