@@ -608,10 +608,15 @@ function breakdownTable(d, o) {
     .setBackground(o.light).setFontColor(o.dark).setFontWeight("bold");
   d.getRange(first, c).setFormula(
     `=IFERROR(ARRAY_CONSTRAIN(FILTER(Lists!$${o.list}$2:$${o.list}, Lists!$${o.list}$2:$${o.list}<>""), ${o.slots}, 1), "")`);
-  d.getRange(first, c + 2).setFormula(
-    `=ARRAYFORMULA(IF(${names}="", "", ${sumTypes(o.types, `${matchCol},${names},${o.month}`)}))`);
-  d.getRange(first, c + 1).setFormula(
-    `=ARRAYFORMULA(IF(${names}="", "", IF(SUM(${amts})=0, 0, ${amts}/SUM(${amts}))))`);
+  // One formula per row: SUMIFS does not evaluate row by row inside ARRAYFORMULA
+  const amtF = [], pctF = [];
+  for (let r = first; r <= last; r++) {
+    const name = `${Lc(0)}${r}`;
+    amtF.push([`=IF(${name}="", "", ${sumTypes(o.types, `${matchCol},${name},${o.month}`)})`]);
+    pctF.push([`=IF(${name}="", "", IF(SUM(${amts})=0, 0, ${Lc(2)}${r}/SUM(${amts})))`]);
+  }
+  d.getRange(first, c + 2, o.slots, 1).setFormulas(amtF);
+  d.getRange(first, c + 1, o.slots, 1).setFormulas(pctF);
   const bars = [];
   for (let r = first; r <= last; r++) {
     bars.push([`=IF(N(${Lc(2)}${r})=0,"",SPARKLINE(N(${Lc(1)}${r}),{"charttype","bar";"max",1;"color1","${o.bar}"}))`]);
@@ -673,11 +678,14 @@ function buildAnnualDashboard() {
     const first = startRow + 1, last = first + slots - 1, names = `$A${first}:$A${last}`;
     a.getRange(first, 1).setFormula(
       `=IFERROR(ARRAY_CONSTRAIN(FILTER(Lists!$${list}$2:$${list}, Lists!$${list}$2:$${list}<>""), ${slots}, 1), "")`);
-    const months = [];
-    for (let m = 0; m < 12; m++) {
-      months.push(`=ARRAYFORMULA(IF(${names}="", "", ${sumTypes(types, `${XR.cat},${names},${inMonth(m)}`)}))`);
+    // One formula per cell: SUMIFS does not evaluate row by row inside ARRAYFORMULA
+    const grid = [];
+    for (let r = first; r <= last; r++) {
+      const row = [];
+      for (let m = 0; m < 12; m++) row.push(`=IF($A${r}="", "", ${sumTypes(types, `${XR.cat},$A${r},${inMonth(m)}`)})`);
+      grid.push(row);
     }
-    a.getRange(first, 2, 1, 12).setFormulas([months]);
+    a.getRange(first, 2, slots, 12).setFormulas(grid);
     const rowTotals = [];
     for (let r = first; r <= last; r++) rowTotals.push([`=IF($A${r}="", "", SUM(B${r}:M${r}))`]);
     a.getRange(first, 14, slots, 1).setFormulas(rowTotals).setFontWeight("bold");
