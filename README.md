@@ -46,9 +46,11 @@ Google sign-in only accepts the APK signed with the key whose SHA-1 you register
 The key lives at `app/shaketrack.keystore` (git-ignored, don't commit it, keep a backup).
 - Show its SHA-1 (paste this into the Android OAuth client):
   `keytool -list -v -keystore app/shaketrack.keystore -storepass android -alias shaketrack`
-- For GitHub Actions builds, add it as a repository secret named `DEBUG_KEYSTORE_BASE64`
-  (Settings → Secrets and variables → Actions). Copy the value with PowerShell:
-  `[Convert]::ToBase64String([IO.File]::ReadAllBytes("app\shaketrack.keystore")) | Set-Clipboard`
+- For GitHub Actions builds the key is committed **encrypted** as `app/shaketrack.keystore.enc`.
+  Make it (prompts for a passphrase you choose):
+  `& "C:\Program Files\Git\usr\bin\openssl.exe" enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in app\shaketrack.keystore -out app\shaketrack.keystore.enc`
+  then add the same passphrase as a repository secret named `KEYSTORE_PASSPHRASE`
+  (Settings → Secrets and variables → Actions). The build checks the decrypted key's SHA-1.
 
 ### 5. Build and install
 - Push to `main` (or run the "Build APK" workflow) and download `ShakeTrack-apk` from the run,

@@ -16,24 +16,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
-      # Same signing key on every build, so Google sign-in keeps working (see README)
+      # Same signing key on every build, so Google sign-in keeps working (see README).
+      # The key is committed encrypted (app/shaketrack.keystore.enc); the passphrase is a repo secret.
       - name: Restore signing key
         env:
-          KEYSTORE: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSPHRASE: ${{ secrets.KEYSTORE_PASSPHRASE }}
         run: |
-          if [ -n "$KEYSTORE" ]; then
-            # Keep only base64 characters: pasted values can pick up line breaks, quotes or other stray text
-            CLEAN=$(printf '%s' "$KEYSTORE" | tr -cd 'A-Za-z0-9+/=')
-            echo "Secret length: ${#KEYSTORE} raw, ${#CLEAN} base64 chars (expected 3436)"
-            printf '%s' "$CLEAN" | base64 -d > app/shaketrack.keystore
-            SHA1=$(keytool -list -v -keystore app/shaketrack.keystore -storepass android -alias shaketrack | grep -oE "SHA1: [0-9A-F:]+" | cut -d' ' -f2)
-            echo "Signing key SHA-1: $SHA1"
-            if [ "$SHA1" != "A3:AF:D4:E9:9D:E2:72:39:31:EB:10:27:28:99:31:49:8E:99:9C:71" ]; then
-              echo "::error::Signing key SHA-1 doesn't match the one registered in Google Cloud - re-save the DEBUG_KEYSTORE_BASE64 secret"
-              exit 1
-            fi
-          else
-            echo "::warning::DEBUG_KEYSTORE_BASE64 secret not set - APK gets a random key and Google sign-in will fail"
+          if [ -z "$KEYSTORE_PASSPHRASE" ]; then
+            echo "::error::KEYSTORE_PASSPHRASE secret is not set (see README, 'Signing key')"
+            exit 1
+          fi
+          if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in app/shaketrack.keystore.enc \
+                 -out app/shaketrack.keystore -pass env:KEYSTORE_PASSPHRASE; then
+            echo "::error::Could not decrypt the signing key - KEYSTORE_PASSPHRASE doesn't match the one used to encrypt it"
+            exit 1
+          fi
+          SHA1=$(keytool -list -v -keystore app/shaketrack.keystore -storepass android -alias shaketrack | grep -oE "SHA1: [0-9A-F:]+" | cut -d' ' -f2)
+          echo "Signing key SHA-1: $SHA1"
+          if [ "$SHA1" != "A3:AF:D4:E9:9D:E2:72:39:31:EB:10:27:28:99:31:49:8E:99:9C:71" ]; then
+            echo "::error::Decrypted key isn't the one registered in Google Cloud"
+            exit 1
           fi
       - run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
