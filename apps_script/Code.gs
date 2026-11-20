@@ -19,6 +19,8 @@ function book() {
 
 const N = 5000; // Maximum data rows evaluated by the sheet dashboards
 const RECENT_LIMIT = 30;
+const EXP_SLOTS = 30; // rows reserved for expense categories on the dashboards
+const INC_SLOTS = 15; // rows reserved for income categories
 
 const EXPENSE_CATEGORIES = [
   "Food",
@@ -509,79 +511,25 @@ function buildDashboard() {
   d.getRange("L6:N9").setBorder(true, true, true, true, false, false, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
 
   // ==========================================================================
-  // SECTION: EXPENSES TABLE
+  // BREAKDOWN TABLES — category rows come live from the Lists tab, so adding,
+  // renaming or removing a tag there updates the dashboard with no re-run.
   // ==========================================================================
-  d.getRange("B12:E12").merge().setValue("EXPENSES BREAKDOWN").setBackground("#991B1B").setFontColor("#FFFFFF").setFontWeight("bold");
-  d.getRange("B13:E13").setValues([["Category", "%", "Amount", "Share"]]).setBackground("#FEE2E2").setFontColor("#991B1B").setFontWeight("bold");
-
-  // Write category names as LITERAL VALUES (prevents #NAME? errors)
-  const expCats = EXPENSE_CATEGORIES.map(c => [c]);
-  d.getRange(14, 2, EXPENSE_CATEGORIES.length, 1).setValues(expCats).setFontColor(NAVY);
-
-  // Write formulas for columns C, D, E
-  const expFormulas = [];
-  for (let i = 0; i < EXPENSE_CATEGORIES.length; i++) {
-    const r = 14 + i;
-    expFormulas.push([
-      `=IF($E$7=0,0,D${r}/$E$7)`,
-      `=IFERROR(SUMIFS(${amtCol},${typeCol},"Expense",${catCol},B${r},${inMonth}),0)`,
-      `=IF(D${r}=0,"",SPARKLINE(C${r},{"charttype","bar";"max",1;"color1","${RED}"}))`
-    ]);
-  }
-  d.getRange(14, 3, EXPENSE_CATEGORIES.length, 3).setFormulas(expFormulas);
-  d.getRange(14, 3, EXPENSE_CATEGORIES.length, 1).setNumberFormat(PCT);
-  d.getRange(14, 4, EXPENSE_CATEGORIES.length, 1).setNumberFormat(INR);
-
-  const expTotalRow = 14 + EXPENSE_CATEGORIES.length;
-  d.getRange(expTotalRow, 2).setValue("TOTAL EXPENSES").setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
-  d.getRange(expTotalRow, 3, 1, 2).setFormulas([[`=SUM(C14:C${expTotalRow - 1})`, `=SUM(D14:D${expTotalRow - 1})`]])
-    .setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
-  d.getRange(expTotalRow, 5).setValue("").setBackground("#FEE2E2");
-  d.getRange(expTotalRow, 3).setNumberFormat(PCT);
-  d.getRange(expTotalRow, 4).setNumberFormat(INR);
-
-  // ==========================================================================
-  // SECTION: INCOME TABLE
-  // ==========================================================================
-  d.getRange("I12:L12").merge().setValue("INCOME BREAKDOWN").setBackground("#1E40AF").setFontColor("#FFFFFF").setFontWeight("bold");
-  d.getRange("I13:L13").setValues([["Category", "%", "Amount", "Share"]]).setBackground("#DBEAFE").setFontColor("#1E40AF").setFontWeight("bold");
-
-  // Write income category names as LITERAL VALUES (prevents #NAME? errors)
-  const incCats = INCOME_CATEGORIES.map(c => [c]);
-  d.getRange(14, 9, INCOME_CATEGORIES.length, 1).setValues(incCats).setFontColor(NAVY);
-
-  // Write formulas for columns J, K, L
-  const incFormulas = [];
-  for (let i = 0; i < INCOME_CATEGORIES.length; i++) {
-    const r = 14 + i;
-    incFormulas.push([
-      `=IF($B$7=0,0,K${r}/$B$7)`,
-      `=IFERROR(SUMIFS(${amtCol},${typeCol},"Income",${catCol},I${r},${inMonth}),0)`,
-      `=IF(K${r}=0,"",SPARKLINE(J${r},{"charttype","bar";"max",1;"color1","${BLUE}"}))`
-    ]);
-  }
-  d.getRange(14, 10, INCOME_CATEGORIES.length, 3).setFormulas(incFormulas);
-  d.getRange(14, 10, INCOME_CATEGORIES.length, 1).setNumberFormat(PCT);
-  d.getRange(14, 11, INCOME_CATEGORIES.length, 1).setNumberFormat(INR);
-
-  const incTotalRow = 14 + INCOME_CATEGORIES.length;
-  d.getRange(incTotalRow, 9).setValue("TOTAL INCOME").setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
-  d.getRange(incTotalRow, 10, 1, 2).setFormulas([[`=SUM(J14:J${incTotalRow - 1})`, `=SUM(K14:K${incTotalRow - 1})`]])
-    .setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
-  d.getRange(incTotalRow, 12).setValue("").setBackground("#DBEAFE");
-  d.getRange(incTotalRow, 10).setNumberFormat(PCT);
-  d.getRange(incTotalRow, 11).setNumberFormat(INR);
-
-  d.getRange(12, 2, EXPENSE_CATEGORIES.length + 3, 4).setBorder(true, true, true, true, true, true, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
-  d.getRange(12, 9, INCOME_CATEGORIES.length + 3, 4).setBorder(true, true, true, true, true, true, BORDER_COL, SpreadsheetApp.BorderStyle.SOLID);
+  breakdownTable(d, {
+    col: 2, listCol: "A", type: "Expense", slots: EXP_SLOTS, totalCell: "$E$7",
+    title: "EXPENSES BREAKDOWN", dark: "#991B1B", light: "#FEE2E2", bar: RED
+  });
+  breakdownTable(d, {
+    col: 9, listCol: "B", type: "Income", slots: INC_SLOTS, totalCell: "$B$7",
+    title: "INCOME BREAKDOWN", dark: "#1E40AF", light: "#DBEAFE", bar: BLUE
+  });
   d.getDataRange().setFontFamily("Arial");
 
-  // DONUT CHARTS
+  // DONUT CHARTS (ranges cover every slot; empty rows are ignored by the chart)
   try {
     const expChart = d.newChart()
       .setChartType(Charts.ChartType.PIE)
-      .addRange(d.getRange(`B13:B${expTotalRow - 1}`))
-      .addRange(d.getRange(`D13:D${expTotalRow - 1}`))
+      .addRange(d.getRange(13, 2, EXP_SLOTS + 1, 1))
+      .addRange(d.getRange(13, 4, EXP_SLOTS + 1, 1))
       .setNumHeaders(1)
       .setPosition(12, 7, 0, 0)
       .setOption("title", "Expense Distribution")
@@ -594,8 +542,8 @@ function buildDashboard() {
 
     const incChart = d.newChart()
       .setChartType(Charts.ChartType.PIE)
-      .addRange(d.getRange(`I13:I${incTotalRow - 1}`))
-      .addRange(d.getRange(`K13:K${incTotalRow - 1}`))
+      .addRange(d.getRange(13, 9, INC_SLOTS + 1, 1))
+      .addRange(d.getRange(13, 11, INC_SLOTS + 1, 1))
       .setNumHeaders(1)
       .setPosition(12, 14, 0, 0)
       .setOption("title", "Income Distribution")
@@ -608,8 +556,61 @@ function buildDashboard() {
   } catch (_e) {}
 }
 
+/** One category table on the Dashboard: Category | % | Amount | Share, driven by Lists!<listCol>. */
+function breakdownTable(d, o) {
+  const INR = '"₹"#,##0.00', PCT = '0.0%';
+  const c = o.col, first = 14, last = first + o.slots - 1;
+  const L = n => colLetter(c + n); // L(0)=Category, L(1)=%, L(2)=Amount, L(3)=Share
+  const cats = `${L(0)}${first}:${L(0)}${last}`;
+  const amts = `${L(2)}${first}:${L(2)}${last}`;
+  const inMonth = `Expenses!$A$2:$A$${N},">="&$C$4,Expenses!$A$2:$A$${N},"<"&EDATE($C$4,1)`;
+  const typeCol = `Expenses!$B$2:$B$${N}`, amtCol = `Expenses!$D$2:$D$${N}`, catCol = `Expenses!$C$2:$C$${N}`;
+
+  d.getRange(12, c, 1, 4).merge().setValue(o.title).setBackground(o.dark).setFontColor("#FFFFFF").setFontWeight("bold");
+  d.getRange(13, c, 1, 4).setValues([["Category", "%", "Amount", "Share"]])
+    .setBackground(o.light).setFontColor(o.dark).setFontWeight("bold");
+
+  // Category names: every non-empty cell of Lists!<listCol>, up to `slots` rows
+  d.getRange(first, c).setFormula(
+    `=IFERROR(ARRAY_CONSTRAIN(FILTER(Lists!$${o.listCol}$2:$${o.listCol}, Lists!$${o.listCol}$2:$${o.listCol}<>""), ${o.slots}, 1), "")`
+  );
+  d.getRange(first, c + 2).setFormula(
+    `=ARRAYFORMULA(IF(${cats}="", "", IFERROR(SUMIFS(${amtCol},${typeCol},"${o.type}",${catCol},${cats},${inMonth}), 0)))`
+  );
+  d.getRange(first, c + 1).setFormula(
+    `=ARRAYFORMULA(IF(${cats}="", "", IF(${o.totalCell}=0, 0, ${amts}/${o.totalCell})))`
+  );
+  const bars = [];
+  for (let r = first; r <= last; r++) {
+    bars.push([`=IF(N(${L(2)}${r})=0,"",SPARKLINE(N(${L(1)}${r}),{"charttype","bar";"max",1;"color1","${o.bar}"}))`]);
+  }
+  d.getRange(first, c + 3, o.slots, 1).setFormulas(bars);
+  d.getRange(first, c, o.slots, 1).setFontColor("#1E293B");
+  d.getRange(first, c + 1, o.slots, 1).setNumberFormat(PCT);
+  d.getRange(first, c + 2, o.slots, 1).setNumberFormat(INR);
+
+  // Money in categories that aren't (or are no longer) in Lists
+  const other = last + 1, total = last + 2;
+  d.getRange(other, c + 2).setFormula(`=IF(ABS(${o.totalCell}-SUM(${amts}))<0.005, "", ${o.totalCell}-SUM(${amts}))`).setNumberFormat(INR);
+  d.getRange(other, c).setFormula(`=IF(${L(2)}${other}="", "", "Other (not in Lists)")`).setFontColor("#64748B").setFontStyle("italic");
+  d.getRange(total, c, 1, 4).setBackground(o.light).setFontColor(o.dark).setFontWeight("bold");
+  d.getRange(total, c).setValue("TOTAL " + o.type.toUpperCase());
+  d.getRange(total, c + 2).setFormula(`=${o.totalCell}`).setNumberFormat(INR);
+  d.getRange(total, c + 1).setFormula(`=IF(${o.totalCell}=0, "", 1)`).setNumberFormat(PCT);
+
+  d.getRange(12, c, 2, 4).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
+  d.getRange(total, c, 1, 4).setBorder(true, true, true, true, false, false, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
+}
+
+function colLetter(n) {
+  let s = "";
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
 // ----------------------------------------------------------------------------
 // ANNUAL HORIZONTAL DASHBOARD (Month-by-month full-year matrix)
+// Category rows come live from the Lists tab, like the monthly dashboard.
 // ----------------------------------------------------------------------------
 function buildAnnualDashboard() {
   const ss = book();
@@ -620,125 +621,80 @@ function buildAnnualDashboard() {
   a.clear();
   a.setHiddenGridlines(true);
 
-  a.setColumnWidth(1, 160);
+  a.setColumnWidth(1, 170);
   for (let c = 2; c <= 13; c++) a.setColumnWidth(c, 90);
   a.setColumnWidth(14, 110);
 
   const INR = '"₹"#,##0.00';
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const amtCol = `Expenses!$D$2:$D$${N}`, typeCol = `Expenses!$B$2:$B$${N}`;
+  const catCol = `Expenses!$C$2:$C$${N}`, dateCol = `Expenses!$A$2:$A$${N}`;
+  const mStart = m => `DATE($B$3,${m + 1},1)`;
+  const inMonth = m => `${dateCol},">="&${mStart(m)},${dateCol},"<"&EDATE(${mStart(m)},1)`;
 
   a.getRange("A1:N1").merge().setBackground("#0F172A");
   a.getRange("A1").setValue("📅 ANNUAL FINANCIAL MATRIX (MONTH-BY-MONTH HORIZONTAL VIEW)").setFontColor("#FFFFFF")
     .setFontSize(14).setFontWeight("bold").setVerticalAlignment("middle");
-
   a.getRange("A3").setValue("Year:").setFontWeight("bold");
   a.getRange("B3").setFormula("=YEAR(Dashboard!C4)").setFontWeight("bold").setBackground("#FEF3C7")
     .setFontColor("#92400E").setHorizontalAlignment("center");
 
-  a.getRange(5, 1).setValue("Category / Metric").setFontWeight("bold").setBackground("#334155").setFontColor("#FFFFFF");
-  for (let i = 0; i < 12; i++) {
-    a.getRange(5, i + 2).setValue(MONTHS[i]).setFontWeight("bold").setBackground("#334155").setFontColor("#FFFFFF")
-      .setHorizontalAlignment("center");
-  }
-  a.getRange(5, 14).setValue("Year Total").setFontWeight("bold").setBackground("#1E293B").setFontColor("#FFFFFF")
-    .setHorizontalAlignment("center");
+  const head = [["Category / Metric"].concat(MONTHS, ["Year Total"])];
+  a.getRange(5, 1, 1, 14).setValues(head).setFontWeight("bold").setBackground("#334155").setFontColor("#FFFFFF");
+  a.getRange(5, 2, 1, 13).setHorizontalAlignment("center");
 
-  const amtCol = `Expenses!$D$2:$D$${N}`;
-  const typeCol = `Expenses!$B$2:$B$${N}`;
-  const catCol = `Expenses!$C$2:$C$${N}`;
-  const dateCol = `Expenses!$A$2:$A$${N}`;
-
-  let currentRow = 6;
-
-  // INCOME
-  a.getRange(currentRow, 1, 1, 14).merge().setValue("➕ INCOME (INCOMING)").setBackground("#1E40AF").setFontColor("#FFFFFF")
-    .setFontWeight("bold");
-  currentRow++;
-
-  const incStartRow = currentRow;
-  for (let cat of INCOME_CATEGORIES) {
-    a.getRange(currentRow, 1).setValue(cat).setFontWeight("bold").setFontColor("#1E3A8A");
+  // One section: header row, `slots` category rows from Lists!<listCol>, then a TOTAL row
+  // (the total is every entry of that type, so money in unlisted categories still counts).
+  const section = (startRow, title, type, listCol, slots, dark, light, nameColor) => {
+    a.getRange(startRow, 1, 1, 14).merge().setValue(title).setBackground(dark).setFontColor("#FFFFFF").setFontWeight("bold");
+    const first = startRow + 1, last = first + slots - 1, cats = `$A${first}:$A${last}`;
+    a.getRange(first, 1).setFormula(
+      `=IFERROR(ARRAY_CONSTRAIN(FILTER(Lists!$${listCol}$2:$${listCol}, Lists!$${listCol}$2:$${listCol}<>""), ${slots}, 1), "")`
+    );
+    a.getRange(first, 1, slots, 1).setFontColor(nameColor).setFontWeight("bold");
+    const monthFormulas = [];
     for (let m = 0; m < 12; m++) {
-      const mStart = `DATE($B$3,${m + 1},1)`;
-      const mEnd = `EDATE(${mStart},1)`;
-      a.getRange(currentRow, m + 2).setFormula(
-        `=IFERROR(SUMIFS(${amtCol},${typeCol},"Income",${catCol},$A${currentRow},${dateCol},">="&${mStart},${dateCol},"<"&${mEnd}),0)`
+      monthFormulas.push(
+        `=ARRAYFORMULA(IF(${cats}="", "", IFERROR(SUMIFS(${amtCol},${typeCol},"${type}",${catCol},${cats},${inMonth(m)}), 0)))`
       );
     }
-    a.getRange(currentRow, 14).setFormula(`=SUM(B${currentRow}:M${currentRow})`).setFontWeight("bold");
-    currentRow++;
+    a.getRange(first, 2, 1, 12).setFormulas([monthFormulas]);
+    const rowTotals = [];
+    for (let r = first; r <= last; r++) rowTotals.push([`=IF($A${r}="", "", SUM(B${r}:M${r}))`]);
+    a.getRange(first, 14, slots, 1).setFormulas(rowTotals).setFontWeight("bold");
+
+    const totalRow = last + 1, totals = [];
+    for (let m = 0; m < 12; m++) totals.push(`=IFERROR(SUMIFS(${amtCol},${typeCol},"${type}",${inMonth(m)}), 0)`);
+    totals.push(`=SUM(B${totalRow}:M${totalRow})`);
+    a.getRange(totalRow, 1).setValue("TOTAL " + (type === "Income" ? "INCOME" : "EXPENDITURE"));
+    a.getRange(totalRow, 2, 1, 13).setFormulas([totals]);
+    a.getRange(totalRow, 1, 1, 14).setFontWeight("bold").setBackground(light).setFontColor(dark);
+    return totalRow;
+  };
+
+  const totalIncRow = section(6, "➕ INCOME (INCOMING)", "Income", "B", INC_SLOTS, "#1E40AF", "#DBEAFE", "#1E3A8A");
+  const totalExpRow = section(totalIncRow + 2, "➖ EXPENDITURES (OUTGOING)", "Expense", "A", EXP_SLOTS, "#991B1B", "#FEE2E2", "#7F1D1D");
+
+  // NET SUMMARY
+  let r = totalExpRow + 2;
+  a.getRange(r, 1, 1, 14).merge().setValue("📊 NET SUMMARY (SAVINGS & REMAINING)").setBackground("#14532D")
+    .setFontColor("#FFFFFF").setFontWeight("bold");
+  const netRow = r + 1, pctRow = r + 2, net = [], pct = [];
+  for (let m = 0; m < 13; m++) {
+    const L = colLetter(m + 2);
+    net.push(`=${L}${totalIncRow}-${L}${totalExpRow}`);
+    pct.push(`=IF(${L}${totalIncRow}=0, "", ${L}${netRow}/${L}${totalIncRow})`);
   }
-  const incEndRow = currentRow - 1;
+  a.getRange(netRow, 1).setValue("NET REMAINING");
+  a.getRange(netRow, 2, 1, 13).setFormulas([net]);
+  a.getRange(netRow, 1, 1, 14).setFontWeight("bold").setBackground("#DCFCE7").setFontColor("#15803D");
+  a.getRange(pctRow, 1).setValue("SAVINGS RATE %");
+  a.getRange(pctRow, 2, 1, 13).setFormulas([pct]).setNumberFormat("0.0%");
+  a.getRange(pctRow, 1, 1, 14).setFontWeight("bold").setBackground("#F0FDF4").setFontColor("#15803D");
 
-  const totalIncRow = currentRow;
-  a.getRange(totalIncRow, 1).setValue("TOTAL INCOME").setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
-  for (let m = 0; m < 12; m++) {
-    const colLetter = String.fromCharCode(66 + m);
-    a.getRange(totalIncRow, m + 2).setFormula(`=SUM(${colLetter}${incStartRow}:${colLetter}${incEndRow})`)
-      .setFontWeight("bold").setBackground("#DBEAFE").setFontColor("#1E40AF");
-  }
-  a.getRange(totalIncRow, 14).setFormula(`=SUM(B${totalIncRow}:M${totalIncRow})`).setFontWeight("bold")
-    .setBackground("#BFDBFE").setFontColor("#1E40AF");
-  currentRow += 2;
-
-  // EXPENDITURES
-  a.getRange(currentRow, 1, 1, 14).merge().setValue("➖ EXPENDITURES (OUTGOING)").setBackground("#991B1B").setFontColor("#FFFFFF")
-    .setFontWeight("bold");
-  currentRow++;
-
-  const expStartRow = currentRow;
-  for (let cat of EXPENSE_CATEGORIES) {
-    a.getRange(currentRow, 1).setValue(cat).setFontColor("#7F1D1D");
-    for (let m = 0; m < 12; m++) {
-      const mStart = `DATE($B$3,${m + 1},1)`;
-      const mEnd = `EDATE(${mStart},1)`;
-      a.getRange(currentRow, m + 2).setFormula(
-        `=IFERROR(SUMIFS(${amtCol},${typeCol},"Expense",${catCol},$A${currentRow},${dateCol},">="&${mStart},${dateCol},"<"&${mEnd}),0)`
-      );
-    }
-    a.getRange(currentRow, 14).setFormula(`=SUM(B${currentRow}:M${currentRow})`).setFontWeight("bold");
-    currentRow++;
-  }
-  const expEndRow = currentRow - 1;
-
-  const totalExpRow = currentRow;
-  a.getRange(totalExpRow, 1).setValue("TOTAL EXPENDITURE").setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
-  for (let m = 0; m < 12; m++) {
-    const colLetter = String.fromCharCode(66 + m);
-    a.getRange(totalExpRow, m + 2).setFormula(`=SUM(${colLetter}${expStartRow}:${colLetter}${expEndRow})`)
-      .setFontWeight("bold").setBackground("#FEE2E2").setFontColor("#991B1B");
-  }
-  a.getRange(totalExpRow, 14).setFormula(`=SUM(B${totalExpRow}:M${totalExpRow})`).setFontWeight("bold")
-    .setBackground("#FECACA").setFontColor("#991B1B");
-  currentRow += 2;
-
-  // NET REMAINING
-  a.getRange(currentRow, 1, 1, 14).merge().setValue("📊 NET SUMMARY (SAVINGS & REMAINING)").setBackground("#14532D").setFontColor("#FFFFFF")
-    .setFontWeight("bold");
-  currentRow++;
-
-  const netRow = currentRow;
-  a.getRange(netRow, 1).setValue("NET REMAINING").setFontWeight("bold").setBackground("#DCFCE7").setFontColor("#15803D");
-  for (let m = 0; m < 12; m++) {
-    const colLetter = String.fromCharCode(66 + m);
-    a.getRange(netRow, m + 2).setFormula(`=${colLetter}${totalIncRow}-${colLetter}${totalExpRow}`)
-      .setFontWeight("bold").setBackground("#DCFCE7").setFontColor("#15803D");
-  }
-  a.getRange(netRow, 14).setFormula(`=B${netRow}+C${netRow}+D${netRow}+E${netRow}+F${netRow}+G${netRow}+H${netRow}+I${netRow}+J${netRow}+K${netRow}+L${netRow}+M${netRow}`)
-    .setFontWeight("bold").setBackground("#BBF7D0").setFontColor("#15803D");
-  currentRow++;
-
-  const pctRow = currentRow;
-  a.getRange(pctRow, 1).setValue("SAVINGS RATE %").setFontWeight("bold").setBackground("#F0FDF4").setFontColor("#15803D");
-  for (let m = 0; m < 12; m++) {
-    const colLetter = String.fromCharCode(66 + m);
-    a.getRange(pctRow, m + 2).setFormula(`=IF(${colLetter}${totalIncRow}=0,"0.0%",${colLetter}${netRow}/${colLetter}${totalIncRow})`)
-      .setFontWeight("bold").setBackground("#F0FDF4").setFontColor("#15803D").setNumberFormat("0.0%");
-  }
-  a.getRange(pctRow, 14).setFormula(`=IF(N${totalIncRow}=0,"0.0%",N${netRow}/N${totalIncRow})`)
-    .setFontWeight("bold").setBackground("#DCFCE7").setFontColor("#15803D").setNumberFormat("0.0%");
-
-  a.getRange(6, 2, currentRow - 6, 13).setNumberFormat(INR);
-  a.getRange(5, 1, currentRow - 4, 14).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
+  a.getRange(6, 2, netRow - 5, 13).setNumberFormat(INR);
+  a.getRange(pctRow, 2, 1, 13).setNumberFormat("0.0%");
+  a.getRange(5, 1, pctRow - 4, 14).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
   a.getDataRange().setFontFamily("Arial");
+  a.setFrozenRows(5);
 }
