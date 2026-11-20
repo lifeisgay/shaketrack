@@ -550,6 +550,7 @@ function buildDashboard() {
   kpi("I6:K6", "SAVED", VIOLET, "#F5F3FF", `=${sumTypes(["Savings"], month)}`,
     `=IF(B7=0,"",TEXT(I7/B7,"0%")&" of income")`);
   kpi("L6:N6", "LEFT", GREEN, "#F0FDF4", `=B7-E7-I7`, `="You owe (all time): "&TEXT(${owe},"#,##0")`);
+  d.getRange("L7").setNumberFormat('"₹"#,##0.00;[Red]-"₹"#,##0.00'); // red when overspent
 
   d.getRange("B10:N10").merge().setFormula(
     `="Card bills paid this month: "&TEXT(${sumTypes(["Transfer"], month)},"#,##0")&"   ·   Loan repaid: "&TEXT(${sumTypes(["Repayment"], month)},"#,##0")&"   (neither is counted as spending)"`
@@ -720,7 +721,8 @@ function buildAnnualDashboard() {
     // Year column: sum, except the rate which is recomputed from the year totals
     f.push(def[0] === "SAVINGS RATE" ? `=IF(N${incTot}=0,"",N${savTot}/N${incTot})` : `=SUM(B${r}:M${r})`);
     a.getRange(r, 1).setValue(def[0]);
-    a.getRange(r, 2, 1, 13).setFormulas([f]).setNumberFormat(def[0] === "SAVINGS RATE" ? "0%" : INR);
+    const fmt = def[0] === "SAVINGS RATE" ? "0%" : def[0].indexOf("LEFT") === 0 ? '"₹"#,##0.00;[Red]-"₹"#,##0.00' : INR;
+    a.getRange(r, 2, 1, 13).setFormulas([f]).setNumberFormat(fmt);
     a.getRange(r, 1, 1, 14).setFontWeight(i < 3 ? "bold" : "normal")
       .setBackground(i < 3 ? "#DCFCE7" : "#F8FAFC").setFontColor(i < 3 ? "#15803D" : "#475569");
   });
