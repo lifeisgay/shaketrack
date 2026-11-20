@@ -5,4 +5,5 @@
     <color name="st_surface">#FF131C2F</color>
     <color name="st_line">#FF2A3754</color>
     <color name="st_accent">#FF8B93FF</color>
+    <color name="st_logo">#FF5B5BF0</color>
 </resources>

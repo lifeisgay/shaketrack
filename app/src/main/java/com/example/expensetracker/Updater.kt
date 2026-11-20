@@ -79,6 +79,17 @@ object Updater {
         }
     }
 
+    /** An update waiting for the "install apps" permission. */
+    private var pending: Release? = null
+
+    /** Call from onResume: finishes an update the user just granted the permission for. */
+    fun resume(activity: Activity, scope: CoroutineScope) {
+        val r = pending ?: return
+        if (Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) return
+        pending = null
+        download(activity, scope, r)
+    }
+
     private fun offer(activity: Activity, scope: CoroutineScope, r: Release, current: Int) {
         AlertDialog.Builder(activity)
             .setTitle("Update available")
@@ -91,9 +102,10 @@ object Updater {
     private fun download(activity: Activity, scope: CoroutineScope, r: Release) {
         // Android only lets an app start an install once the user allows it ("Install unknown apps")
         if (Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
+            pending = r // continued by resume() when the user comes back with the permission
             AlertDialog.Builder(activity)
                 .setTitle("One-time permission")
-                .setMessage("To install updates, allow ShakeTrack to install apps. Turn it on, come back, and tap Update again.")
+                .setMessage("To install updates, allow ShakeTrack to install apps, then come back. The update continues by itself.")
                 .setPositiveButton("Open settings") { _, _ ->
                     activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}")))
                 }

@@ -60,6 +60,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        Updater.resume(this, scope) // continue an update after "Install unknown apps" was allowed
         if (Prefs.isSignedIn(this)) {
             ShakeService.start(this)
             Api.refreshLists(this)
