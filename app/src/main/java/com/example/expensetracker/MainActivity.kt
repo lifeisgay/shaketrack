@@ -346,40 +346,56 @@ class MainActivity : Activity() {
 
     private fun fillDashboard(holder: LinearLayout, j: JSONObject) {
         val income = j.optDouble("income", 0.0)
-        val expense = j.optDouble("expense", 0.0)
-        val left = income - expense
+        val spent = j.optDouble("expense", 0.0) // everyday + fixed
+        val saved = j.optDouble("savings", 0.0)
+        val owe = j.optDouble("owe", 0.0)
+        val left = income - spent - saved
         val count = j.optInt("count")
 
         // Hero: what's left this month
         val hero = Ui.card(this).apply { background = Ui.round(this@MainActivity, Ui.ACCENT_SOFT, 22, Ui.LINE) }
         hero.addView(Ui.label(this, "Left this month", Ui.ACCENT).apply { setPadding(0, 0, 0, dp(4)) })
         hero.addView(Ui.amount(this, Ui.money(left), 38f, if (left >= 0) Ui.TEXT else Ui.RED))
-        val rate = if (income > 0) "${((left / income) * 100).toInt()}% of income saved" else "No income logged yet"
-        hero.addView(Ui.text(this, "$rate  ·  $count entries", 14f, Ui.MUTED).apply { setPadding(0, dp(4), 0, 0) })
+        hero.addView(Ui.text(this, "Income − spent − saved  ·  $count entries", 14f, Ui.MUTED).apply { setPadding(0, dp(4), 0, 0) })
         holder.addView(hero)
 
-        // Income / Spent
-        val kpis = LinearLayout(this).apply {
+        // 2 × 2: Income, Spent, Saved, You owe
+        fun pair(a: View, b: View) = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(12), 0, 0) // the cards' own margins are replaced by the weight params
+            addView(a, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { rightMargin = dp(10) })
+            addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        kpis.addView(kpi("Income", income, Ui.GREEN), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(10) })
-        kpis.addView(kpi("Spent", expense, Ui.RED), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        holder.addView(kpis)
+        val rate = if (income > 0) "${((saved / income) * 100).toInt()}% of income" else null
+        holder.addView(pair(kpi("Income", income, Ui.GREEN, null), kpi("Spent", spent, Ui.RED, "Everyday + fixed")))
+        holder.addView(pair(kpi("Saved", saved, Ui.VIOLET, rate),
+            kpi("You owe", owe, Ui.AMBER, if (owe > 0) "Borrowed − repaid, all time" else "No debt")))
 
-        // Credit card: spending on the card vs. bills paid (bills aren't counted as expenses)
-        val cardSpent = j.optDouble("card_spent", 0.0)
-        val cardPaid = j.optDouble("card_paid", 0.0)
-        if (cardSpent > 0 || cardPaid > 0) {
+        // Credit cards: spent this month and still to pay (spent − bills paid, all time)
+        val cards = j.optJSONArray("cards")
+        if (cards != null && cards.length() > 0) {
             val c = Ui.card(this)
             val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
             head.addView(Ui.icon(this, R.drawable.ic_card, Ui.BLUE, 20))
-            head.addView(Ui.label(this, "Credit card").apply { setPadding(dp(10), 0, 0, 0) })
-            c.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
-            c.addView(lineItem("Spent on card", cardSpent, Ui.TEXT))
-            c.addView(lineItem("Bills paid", cardPaid, Ui.BLUE))
-            c.addView(Ui.text(this, "Bill payments settle earlier card spending, so they aren't counted as expenses.", 13f, Ui.FAINT).apply {
-                setPadding(0, dp(8), 0, 0)
+            head.addView(Ui.label(this, "Credit cards").apply { setPadding(dp(10), 0, 0, 0) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            head.addView(Ui.text(this, "To pay", 13f, Ui.FAINT))
+            c.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) })
+            for (k in 0 until cards.length()) {
+                val card = cards.getJSONObject(k)
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
+                val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                names.addView(Ui.text(this, card.optString("name"), 16f))
+                val sub = mutableListOf("spent ${Ui.money(card.optDouble("spent"))} this month")
+                if (card.optDouble("paid") > 0) sub.add("paid ${Ui.money(card.optDouble("paid"))}")
+                names.addView(Ui.text(this, sub.joinToString("  ·  "), 13f, Ui.MUTED))
+                row.addView(names, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                val due = card.optDouble("due")
+                row.addView(Ui.amount(this, Ui.money(maxOf(due, 0.0)), 17f, if (due > 0.005) Ui.TEXT else Ui.GREEN))
+                c.addView(row)
+            }
+            c.addView(Ui.text(this, "Card bills aren't counted as spending: the purchases already were.", 13f, Ui.FAINT).apply {
+                setPadding(0, dp(6), 0, 0)
             })
             holder.addView(c)
         }
@@ -393,9 +409,10 @@ class MainActivity : Activity() {
             return
         }
 
-        holder.addView(breakdown("Spending by category", j.optJSONArray("expense_categories"), expense, Ui.RED))
-        val inc = j.optJSONArray("income_categories")
-        if (inc != null && inc.length() > 0) holder.addView(breakdown("Income by category", inc, income, Ui.GREEN))
+        breakdownIfAny(holder, "Everyday expenses", j.optJSONArray("expense_categories"), j.optDouble("everyday"), Ui.RED)
+        breakdownIfAny(holder, "Fixed expenses", j.optJSONArray("fixed_categories"), 0.0, Ui.AMBER)
+        breakdownIfAny(holder, "Savings", j.optJSONArray("savings_categories"), saved, Ui.VIOLET)
+        breakdownIfAny(holder, "Income and borrowing", j.optJSONArray("income_categories"), 0.0, Ui.GREEN)
 
         val people = j.optJSONArray("people")
         if (!mineOnly && people != null && people.length() > 1) {
@@ -412,6 +429,14 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Adds a category breakdown card when it has rows. A total of 0 means "sum of the rows". */
+    private fun breakdownIfAny(holder: LinearLayout, heading: String, arr: JSONArray?, total: Double, color: Int) {
+        if (arr == null || arr.length() == 0) return
+        var t = total
+        if (t <= 0) for (k in 0 until arr.length()) t += arr.getJSONObject(k).optDouble("amount")
+        holder.addView(breakdown(heading, arr, t, color))
+    }
+
     private fun lineItem(label: String, value: Double, color: Int) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -420,9 +445,10 @@ class MainActivity : Activity() {
         addView(Ui.amount(this@MainActivity, Ui.money(value), 16f, color))
     }
 
-    private fun kpi(label: String, value: Double, color: Int) = Ui.card(this).apply {
+    private fun kpi(label: String, value: Double, color: Int, sub: String?) = Ui.card(this).apply {
         addView(Ui.label(this@MainActivity, label, color).apply { setPadding(0, 0, 0, dp(4)) })
         addView(Ui.amount(this@MainActivity, Ui.money(value), 22f))
+        if (sub != null) addView(Ui.text(this@MainActivity, sub, 12f, Ui.FAINT).apply { setPadding(0, dp(2), 0, 0) })
     }
 
     private fun breakdown(heading: String, arr: JSONArray?, total: Double, color: Int): View {
@@ -507,10 +533,21 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Look of each entry type: colors, amount sign and a short label shown in the row. */
+    private data class TypeStyle(val fg: Int, val bg: Int, val sign: Int, val tag: String?)
+
+    private fun styleOf(type: String) = when (type) {
+        "Income" -> TypeStyle(Ui.GREEN, Ui.GREEN_SOFT, +1, null)
+        "Borrowed" -> TypeStyle(Ui.AMBER, Ui.AMBER_SOFT, +1, "borrowed")
+        "Savings" -> TypeStyle(Ui.VIOLET, Ui.VIOLET_SOFT, 0, "saved")
+        "Transfer" -> TypeStyle(Ui.BLUE, Ui.BLUE_SOFT, 0, "card bill")
+        "Repayment" -> TypeStyle(Ui.AMBER, Ui.AMBER_SOFT, 0, "loan repaid")
+        "Fixed" -> TypeStyle(Ui.TEXT, Ui.SURFACE_2, -1, "fixed")
+        else -> TypeStyle(Ui.TEXT, Ui.SURFACE_2, -1, null)
+    }
+
     private fun entryRow(e: JSONObject, fmt: SimpleDateFormat): View {
-        val type = e.optString("type")
-        val income = type == "Income"
-        val transfer = type == "Transfer"
+        val st = styleOf(e.optString("type"))
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -521,28 +558,21 @@ class MainActivity : Activity() {
             setOnClickListener { editDialog(e) }
             setOnLongClickListener { Ui.vibrate(this@MainActivity, 30); confirmDelete(e, null); true }
         }
-        // Letter avatar tinted by type: green income, blue card bill, neutral expense
-        val (fg, bg) = when {
-            income -> Ui.GREEN to Ui.GREEN_SOFT
-            transfer -> Ui.BLUE to Ui.BLUE_SOFT
-            else -> Ui.TEXT to Ui.SURFACE_2
-        }
-        row.addView(Ui.avatar(this, e.optString("category"), fg, bg).apply {
+        row.addView(Ui.avatar(this, e.optString("category"), st.fg, st.bg).apply {
             (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(14)
         })
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val note = e.optString("note")
         left.addView(Ui.text(this, e.optString("category"), 16f).apply { typeface = Ui.MEDIUM })
+        if (note.isNotEmpty()) left.addView(Ui.text(this, note, 14f, Ui.TEXT).apply { setPadding(0, dp(1), 0, 0) })
         val meta = mutableListOf(fmt.format(Date(e.optLong("ts"))).substringAfter(", "), e.optString("payment"))
-        if (transfer) meta.add("card bill")
+        st.tag?.let { meta.add(it) }
         if (Prefs.isAdmin(this) && e.optString("email") != Prefs.email(this)) meta.add(e.optString("user"))
         left.addView(Ui.text(this, meta.filter { it.isNotEmpty() }.joinToString("  ·  "), 14f, Ui.MUTED).apply { setPadding(0, dp(2), 0, 0) })
         row.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val amt = e.optDouble("amount")
-        row.addView(when {
-            income -> Ui.amount(this, Ui.money(amt, sign = true), 17f, Ui.GREEN)
-            transfer -> Ui.amount(this, Ui.money(amt), 17f, Ui.BLUE)
-            else -> Ui.amount(this, Ui.money(-amt), 17f, Ui.TEXT)
-        })
+        val shown = when (st.sign) { 1 -> Ui.money(amt, sign = true); -1 -> Ui.money(-amt); else -> Ui.money(amt) }
+        row.addView(Ui.amount(this, shown, 17f, if (st.sign == -1) Ui.TEXT else st.fg))
         return row.also {
             it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
         }
@@ -565,19 +595,27 @@ class MainActivity : Activity() {
     }
 
     private fun editDialog(e: JSONObject) {
-        // One list of (type, category); the current one is kept even if it was removed from Lists
+        // One list of (section, tag) across all sections; the current tag is kept even if it
+        // was removed from the Lists tab. The server re-derives Borrowed / Repayment from the tag.
         val curCat = e.optString("category")
         val curType = e.optString("type").ifEmpty { "Expense" }
-        val trCats = Prefs.transferCategories(this)
+        val section = when (curType) { "Borrowed" -> "Income"; "Repayment" -> "Fixed"; else -> curType }
+        val cards = Prefs.cards(this)
         val options = mutableListOf<Pair<String, String>>()
-        Prefs.expenseCategories(this).filter { it !in trCats }.forEach { options.add("Expense" to it) }
+        Prefs.expenseCategories(this).forEach { options.add("Expense" to it) }
         Prefs.incomeCategories(this).forEach { options.add("Income" to it) }
-        trCats.forEach { options.add("Transfer" to it) }
-        if ((curType to curCat) !in options) options.add(curType to curCat)
+        Prefs.savingsCategories(this).forEach { options.add("Savings" to it) }
+        Prefs.fixedCategories(this).filter { it !in cards }.forEach { options.add("Fixed" to it) }
+        cards.forEach { options.add("Transfer" to it) }
+        if ((section to curCat) !in options) options.add(section to curCat)
         val labels = options.map { (t, c) ->
-            when (t) { "Income" -> "$c  (income)"; "Transfer" -> "$c  (card bill)"; else -> c }
+            when (t) {
+                "Income" -> "$c  (income)"; "Savings" -> "$c  (savings)"; "Fixed" -> "$c  (fixed)"
+                "Transfer" -> "$c  (card bill)"; else -> c
+            }
         }
-        val pays = Prefs.payments(this).let { if (e.optString("payment") in it) it else it + e.optString("payment") }
+        val curPay = e.optString("payment")
+        val pays = (Prefs.payments(this).filter { it != "Card" } + cards).let { if (curPay.isEmpty() || curPay in it) it else it + curPay }
 
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
         form.addView(Ui.label(this, "Amount (₹)").apply { setPadding(0, dp(8), 0, dp(6)) })
@@ -589,21 +627,26 @@ class MainActivity : Activity() {
         form.addView(Ui.label(this, "Category").apply { setPadding(0, dp(16), 0, dp(6)) })
         val cat = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, labels)
-            setSelection(options.indexOf(curType to curCat).coerceAtLeast(0))
+            setSelection(options.indexOf(section to curCat).coerceAtLeast(0))
             minimumHeight = dp(50)
         }
         form.addView(cat)
+        form.addView(Ui.label(this, "Note").apply { setPadding(0, dp(16), 0, dp(6)) })
+        val note = Ui.input(this, "Optional, e.g. what was bought", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES).apply {
+            setText(e.optString("note"))
+        }
+        form.addView(note)
         form.addView(Ui.label(this, "Paid with").apply { setPadding(0, dp(16), 0, dp(6)) })
         val pay = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, pays)
-            setSelection(pays.indexOf(e.optString("payment")).coerceAtLeast(0))
+            setSelection(pays.indexOf(curPay).coerceAtLeast(0))
             minimumHeight = dp(50)
         }
         form.addView(pay)
 
         val dlg = AlertDialog.Builder(this)
             .setTitle("Edit entry")
-            .setView(form)
+            .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton("Save", null)
             .setNeutralButton("Delete", null)
             .setNegativeButton("Cancel", null)
@@ -619,6 +662,7 @@ class MainActivity : Activity() {
                         .put("amount", value)
                         .put("type", newType)
                         .put("category", category)
+                        .put("note", note.text.toString().trim())
                         .put("payment", pay.selectedItem as String))
                     dlg.dismiss()
                     toast("Updated")

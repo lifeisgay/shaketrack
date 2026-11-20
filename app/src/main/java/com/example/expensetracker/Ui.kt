@@ -47,6 +47,10 @@ object Ui {
     val BLUE_LINE = 0xFF244A75.toInt()
     val AMBER = 0xFFFBBF24.toInt()
     val AMBER_SOFT = 0xFF3A2E12.toInt()
+    val AMBER_LINE = 0xFF6B5320.toInt()
+    val VIOLET = 0xFFB79CFF.toInt()
+    val VIOLET_SOFT = 0xFF261E45.toInt()
+    val VIOLET_LINE = 0xFF45387A.toInt()
 
     val BOLD: Typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
     val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)

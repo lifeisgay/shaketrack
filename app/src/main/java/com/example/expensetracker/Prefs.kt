@@ -8,10 +8,16 @@ import org.json.JSONObject
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    private const val DEFAULT_EXPENSES = "Food,Fuel,Transport,Groceries,Rent,Snacks and tea,Medicine,F99 expense,Miscellaneous"
-    private const val DEFAULT_INCOMES = "Salary,F99 payment,Borrowed,Income"
-    private const val DEFAULT_PAYMENTS = "GPay,Card,Cash"
-    private const val DEFAULT_TRANSFERS = "Card payment"
+    // Defaults until the sheet's Lists tab has been fetched (see Code.gs for the same lists)
+    private const val DEFAULT_EXPENSES = "Food,Fuel,Transport,Tea & snacks,Miscellaneous,Things bought"
+    private const val DEFAULT_INCOMES = "Salary,Passive income,Borrowed"
+    private const val DEFAULT_SAVINGS = "Gold,Mutual funds / Investments,Bank / Cash savings"
+    private const val DEFAULT_FIXED = "Rent – Bangalore,Rent – Home (native),Electricity (EB) bill,Gas,Medicine,Maid salary,Mobile recharge,Loan repaid"
+    private const val DEFAULT_CARDS = "ICICI card,Jupiter card,OneCard,Amazon Pay Later"
+    private const val DEFAULT_PAYMENTS = "GPay,Cash,Card"
+
+    /** The expense tag that asks what was bought. */
+    const val THINGS_TAG = "Things bought"
 
     private fun list(s: String) = s.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
@@ -46,8 +52,10 @@ object Prefs {
     // --- Category lists cached from the sheet ---
     fun expenseCategories(c: Context): List<String> = list(sp(c).getString("expense_categories", DEFAULT_EXPENSES) ?: DEFAULT_EXPENSES)
     fun incomeCategories(c: Context): List<String> = list(sp(c).getString("income_categories", DEFAULT_INCOMES) ?: DEFAULT_INCOMES)
-    /** Card-bill tags: recorded, but not counted as spending (see Code.gs). */
-    fun transferCategories(c: Context): List<String> = list(sp(c).getString("transfer_categories", DEFAULT_TRANSFERS) ?: DEFAULT_TRANSFERS)
+    fun savingsCategories(c: Context): List<String> = list(sp(c).getString("savings_categories", DEFAULT_SAVINGS) ?: DEFAULT_SAVINGS)
+    fun fixedCategories(c: Context): List<String> = list(sp(c).getString("fixed_categories", DEFAULT_FIXED) ?: DEFAULT_FIXED)
+    /** Credit cards: payment options under "Card", and also the card-bill tags. */
+    fun cards(c: Context): List<String> = list(sp(c).getString("cards", DEFAULT_CARDS) ?: DEFAULT_CARDS)
     fun payments(c: Context): List<String> = list(sp(c).getString("payments", DEFAULT_PAYMENTS) ?: DEFAULT_PAYMENTS)
 
     /** Saves lists from a "login" or "lists" response. */
@@ -61,13 +69,17 @@ object Prefs {
         join("expense_categories")?.let { e.putString("expense_categories", it) }
         join("income_categories")?.let { e.putString("income_categories", it) }
         join("payments")?.let { e.putString("payments", it) }
-        join("transfer_categories")?.let { e.putString("transfer_categories", it) }
+        join("savings_categories")?.let { e.putString("savings_categories", it) }
+        join("fixed_categories")?.let { e.putString("fixed_categories", it) }
+        join("cards")?.let { e.putString("cards", it) }
         e.apply()
     }
 
     // --- Quick entry ---
     fun lastPayment(c: Context): String = sp(c).getString("lastPayment", "GPay") ?: "GPay"
     fun setLastPayment(c: Context, p: String) = sp(c).edit().putString("lastPayment", p).apply()
+    fun lastCard(c: Context): String = sp(c).getString("lastCard", "") ?: ""
+    fun setLastCard(c: Context, card: String) = sp(c).edit().putString("lastCard", card).apply()
 
     /** Most-used tags first (ties keep the sheet's order), so the usual tags are always at the top. */
     fun byUsage(c: Context, tags: List<String>): List<String> {

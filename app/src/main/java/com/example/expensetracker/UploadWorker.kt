@@ -29,6 +29,7 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
             put("category", inputData.getString("category") ?: "Miscellaneous")
             put("payment", inputData.getString("payment") ?: "GPay")
             put("ts", inputData.getLong("ts", System.currentTimeMillis()))
+            put("note", inputData.getString("note") ?: "")
         }
         return try {
             Api.callBlocking(applicationContext, "add", body)
@@ -46,7 +47,7 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
     companion object {
         const val TAG = "upload"
 
-        fun enqueue(ctx: Context, amount: Double, type: String, category: String, payment: String) {
+        fun enqueue(ctx: Context, amount: Double, type: String, category: String, payment: String, note: String = "") {
             val req = OneTimeWorkRequestBuilder<UploadWorker>()
                 .setInputData(
                     workDataOf(
@@ -55,6 +56,7 @@ class UploadWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
                         "type" to type,
                         "category" to category,
                         "payment" to payment,
+                        "note" to note,
                         "ts" to System.currentTimeMillis()
                     )
                 )
