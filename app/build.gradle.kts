@@ -10,8 +10,10 @@ android {
         applicationId = "com.example.expensetracker"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        // CI passes -PversionCode=<run number>; the in-app updater compares against it
+        val code = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+        versionCode = code
+        versionName = "build $code"
     }
     signingConfigs {
         // Google sign-in only works when the APK is signed with the key whose SHA-1 is

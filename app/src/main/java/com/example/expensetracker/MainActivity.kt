@@ -55,6 +55,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         render()
+        Updater.check(this, scope) // offers a newer build from GitHub Releases, if any
     }
 
     override fun onResume() {
@@ -723,6 +724,18 @@ class MainActivity : Activity() {
         body.addView(perms)
 
         if (Prefs.isAdmin(this)) body.addView(familyCard())
+
+        // App version + manual update check
+        val about = Ui.card(this)
+        about.addView(Ui.label(this, "App"))
+        val ver = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        ver.addView(Ui.text(this, "Version: build ${Updater.currentBuild(this)}", 16f),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        ver.addView(Ui.button(this, "Check for updates", primary = false) { Updater.check(this, scope, manual = true) }
+            .apply { textSize = 14f; setPadding(dp(16), 0, dp(16), 0) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)))
+        about.addView(ver)
+        body.addView(about)
 
         // Account
         val acct = Ui.card(this)
