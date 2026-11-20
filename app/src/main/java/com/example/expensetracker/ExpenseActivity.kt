@@ -1,39 +1,29 @@
 package com.example.expensetracker
 
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
 
 /**
- * Modern 3-Section Financial Quick Entry Popup:
- * 1. Payment Method (Default: GPay, Card, Cash)
- * 2. Expenditure Tags (Outgoing -)
- * 3. Income Tags (Incoming +)
- * One-tap on any tag instantly logs the amount and closes.
+ * Quick-add bottom sheet (opened by a shake, the notification or the tile).
+ * Type the amount, tap a tag: it's saved and the sheet closes. Two taps total.
+ * Most-used tags are shown first; the last payment method is remembered.
  */
 class ExpenseActivity : Activity() {
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = Ui.dp(this, v)
 
-    private var selectedPayment: String = "GPay"
-    private val paymentButtons = mutableListOf<TextView>()
+    private var selectedPayment = "GPay"
+    private var paymentNames = listOf<String>()
+    private lateinit var payRow: LinearLayout
     private lateinit var amountInput: EditText
-    private lateinit var userPill: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,340 +36,143 @@ class ExpenseActivity : Activity() {
         }
         Api.refreshLists(this)
 
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
-
-        val payments = Prefs.payments(this)
-        val expCategories = Prefs.expenseCategories(this)
-        val incCategories = Prefs.incomeCategories(this)
-
         selectedPayment = Prefs.lastPayment(this).ifEmpty { "GPay" }
+        val payments = Prefs.payments(this).let { if (selectedPayment in it) it else listOf(selectedPayment) + it }
+        val expTags = Prefs.byUsage(this, Prefs.expenseCategories(this))
+        val incTags = Prefs.byUsage(this, Prefs.incomeCategories(this))
 
-        // Card Container
-        val card = LinearLayout(this).apply {
+        val sheet = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(20))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(24).toFloat()
-                setColor(Color.WHITE)
-                setStroke(dp(1), Color.parseColor("#E2E8F0"))
-            }
-            if (Build.VERSION.SDK_INT >= 21) {
-                elevation = dp(16).toFloat()
+            setPadding(dp(18), dp(10), dp(18), dp(22))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                val r = dp(28).toFloat()
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+                setColor(Ui.SURFACE)
+                setStroke(dp(1), Ui.LINE)
             }
         }
 
-        // --- TOP BAR: User Pill & Close Button ---
-        val topBar = RelativeLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
-        }
+        // Grab handle
+        sheet.addView(View(this).apply { background = Ui.round(this@ExpenseActivity, Ui.LINE, 3) },
+            LinearLayout.LayoutParams(dp(44), dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(12) })
 
-        userPill = TextView(this).apply {
-            text = "👤 ${Prefs.name(this@ExpenseActivity).ifEmpty { "Me" }}"
-            textSize = 12f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(Color.parseColor("#4338CA"))
-            setPadding(dp(12), dp(5), dp(12), dp(5))
-            background = makePillDrawable(Color.parseColor("#EEF2FF"), dp(14).toFloat())
-        }
-        val userParams = RelativeLayout.LayoutParams(
-            RelativeLayout.LayoutParams.WRAP_CONTENT,
-            RelativeLayout.LayoutParams.WRAP_CONTENT
-        ).apply { addRule(RelativeLayout.ALIGN_PARENT_START) }
-        topBar.addView(userPill, userParams)
-
-        val title = TextView(this).apply {
-            text = "⚡ ShakeTrack"
-            textSize = 13f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(Color.parseColor("#64748B"))
-        }
-        val titleParams = RelativeLayout.LayoutParams(
-            RelativeLayout.LayoutParams.WRAP_CONTENT,
-            RelativeLayout.LayoutParams.WRAP_CONTENT
-        ).apply { addRule(RelativeLayout.CENTER_IN_PARENT) }
-        topBar.addView(title, titleParams)
-
-        val closeBtn = TextView(this).apply {
-            text = "✕"
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(dp(8), dp(4), dp(8), dp(4))
+        // Top row: who is logging + close
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(Ui.text(this, "👤  " + Prefs.name(this).ifEmpty { "Me" }, 14f, Ui.ACCENT, bold = true).apply {
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+            background = Ui.round(this@ExpenseActivity, Ui.ACCENT_SOFT, 16)
+        })
+        top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        top.addView(Ui.text(this, "✕", 20f, Ui.MUTED, bold = true).apply {
+            gravity = Gravity.CENTER
+            background = Ui.pressable(this@ExpenseActivity, Ui.SURFACE_2, 20)
+            contentDescription = "Close"
             setOnClickListener { finish() }
-        }
-        val closeParams = RelativeLayout.LayoutParams(
-            RelativeLayout.LayoutParams.WRAP_CONTENT,
-            RelativeLayout.LayoutParams.WRAP_CONTENT
-        ).apply { addRule(RelativeLayout.ALIGN_PARENT_END) }
-        topBar.addView(closeBtn, closeParams)
-        card.addView(topBar)
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        sheet.addView(top)
 
-        // --- HERO AMOUNT INPUT ---
+        // Big amount
         val amountRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(8))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(14).toFloat()
-                setColor(Color.parseColor("#F8FAFC"))
-                setStroke(dp(1), Color.parseColor("#CBD5E1"))
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(14) }
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            background = Ui.round(this@ExpenseActivity, Ui.SURFACE_2, 18, Ui.LINE)
         }
-
-        val currencySymbol = TextView(this).apply {
-            text = "₹"
-            textSize = 30f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(Color.parseColor("#4F46E5"))
-            setPadding(0, 0, dp(8), 0)
-        }
-        amountRow.addView(currencySymbol)
-
+        amountRow.addView(Ui.text(this, "₹", 34f, Ui.ACCENT, bold = true).apply { setPadding(0, 0, dp(8), 0) })
         amountInput = EditText(this).apply {
             hint = "0"
-            setHintTextColor(Color.parseColor("#CBD5E1"))
-            textSize = 30f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F172A"))
+            setHintTextColor(Ui.FAINT)
+            setTextColor(Ui.TEXT)
+            textSize = 40f
+            typeface = Ui.BOLD
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             background = null
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setSingleLine()
         }
-        amountRow.addView(amountInput)
-        card.addView(amountRow)
+        amountRow.addView(amountInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        sheet.addView(amountRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(14); bottomMargin = dp(14)
+        })
 
-        // ====================================================================
-        // SECTION 1: PAYMENT METHOD (Default GPay, Card, Cash)
-        // ====================================================================
-        val payLabel = makeSectionHeader("1. PAYMENT METHOD", "#475569")
-        card.addView(payLabel)
+        // Payment method: equal-width segments
+        payRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        sheet.addView(payRow)
+        paymentNames = payments
+        renderPayments()
 
-        val paymentScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(14) }
-        }
-
-        val paymentRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-
-        payments.forEach { pay ->
-            val pill = TextView(this).apply {
-                text = pay
-                textSize = 12f
-                setPadding(dp(16), dp(6), dp(16), dp(6))
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { rightMargin = dp(8) }
-                isClickable = true
-                setOnClickListener {
-                    vibrate(25)
-                    selectedPayment = pay
-                    Prefs.setLastPayment(this@ExpenseActivity, pay)
-                    refreshPaymentPills()
-                }
-            }
-            paymentButtons.add(pill)
-            paymentRow.addView(pill)
-        }
-        paymentScroll.addView(paymentRow)
-        card.addView(paymentScroll)
-        refreshPaymentPills()
-
-        // ====================================================================
-        // SECTION 2: EXPENDITURE TAGS (Outgoing -)
-        // ====================================================================
-        val expLabel = makeSectionHeader("2. EXPENDITURES (OUTGOING -)", "#E11D48")
-        card.addView(expLabel)
-
-        val expGrid = GridLayout(this).apply {
-            columnCount = 3
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(14) }
+        // Tags
+        sheet.addView(Ui.label(this, "Spent on", Ui.RED).apply { setPadding(dp(2), dp(18), 0, dp(8)) })
+        sheet.addView(tagGrid(expTags, income = false))
+        if (incTags.isNotEmpty()) {
+            sheet.addView(Ui.label(this, "Money in", Ui.GREEN).apply { setPadding(dp(2), dp(16), 0, dp(8)) })
+            sheet.addView(tagGrid(incTags, income = true))
         }
 
-        expCategories.forEach { cat ->
-            val btn = TextView(this).apply {
-                text = cat
-                textSize = 12f
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                setTextColor(Color.parseColor("#991B1B"))
-                gravity = Gravity.CENTER
-                setPadding(dp(6), dp(11), dp(6), dp(11))
-                background = makeTagDrawable(Color.parseColor("#FEF2F2"), Color.parseColor("#FECACA"), Color.parseColor("#FCA5A5"))
-                isClickable = true
-                setOnClickListener {
-                    submitTransaction("Expense", cat)
-                }
-            }
-            val p = GridLayout.LayoutParams().apply {
-                width = 0
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(dp(3), dp(3), dp(3), dp(3))
-            }
-            expGrid.addView(btn, p)
-        }
-        card.addView(expGrid)
-
-        // ====================================================================
-        // SECTION 3: INCOME TAGS (Incoming +)
-        // ====================================================================
-        val incLabel = makeSectionHeader("3. INCOME (INCOMING +)", "#059669")
-        card.addView(incLabel)
-
-        val incGrid = GridLayout(this).apply {
-            columnCount = 3
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        incCategories.forEach { cat ->
-            val btn = TextView(this).apply {
-                text = "+ $cat"
-                textSize = 12f
-                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-                setTextColor(Color.parseColor("#065F46"))
-                gravity = Gravity.CENTER
-                setPadding(dp(6), dp(11), dp(6), dp(11))
-                background = makeTagDrawable(Color.parseColor("#ECFDF5"), Color.parseColor("#A7F3D0"), Color.parseColor("#6EE7B7"))
-                isClickable = true
-                setOnClickListener {
-                    submitTransaction("Income", cat)
-                }
-            }
-            val p = GridLayout.LayoutParams().apply {
-                width = 0
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(dp(3), dp(3), dp(3), dp(3))
-            }
-            incGrid.addView(btn, p)
-        }
-        card.addView(incGrid)
-
-        // ScrollView container in case of smaller displays
         val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            addView(card)
+            isVerticalScrollBarEnabled = false
+            addView(sheet)
         }
+        setContentView(scroll)
 
-        val outer = FrameLayout(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            addView(scroll)
-        }
-
-        setContentView(outer)
+        // Full-width sheet anchored to the bottom of the screen, above the keyboard
+        window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        window.setGravity(Gravity.BOTTOM)
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        )
         amountInput.requestFocus()
     }
 
-    private fun makeSectionHeader(text: String, hexColor: String): TextView {
-        return TextView(this).apply {
-            this.text = text
-            textSize = 10.5f
-            letterSpacing = 0.06f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(Color.parseColor(hexColor))
-            setPadding(0, 0, 0, dp(6))
-        }
-    }
-
-    private fun refreshPaymentPills() {
-        paymentButtons.forEach { pill ->
-            val isSelected = pill.text.toString() == selectedPayment
-            if (isSelected) {
-                pill.background = makePillDrawable(Color.parseColor("#4F46E5"), dp(18).toFloat())
-                pill.setTextColor(Color.WHITE)
-                pill.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            } else {
-                pill.background = makePillDrawable(Color.parseColor("#F1F5F9"), dp(18).toFloat(), Color.parseColor("#E2E8F0"), 1f)
-                pill.setTextColor(Color.parseColor("#475569"))
-                pill.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private fun renderPayments() {
+        payRow.removeAllViews()
+        paymentNames.forEachIndexed { i, name ->
+            val chip = Ui.chip(this, name, name == selectedPayment) {
+                Ui.vibrate(this, 20)
+                selectedPayment = name
+                Prefs.setLastPayment(this, name)
+                renderPayments()
             }
+            payRow.addView(chip, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                if (i > 0) leftMargin = dp(8)
+            })
         }
     }
 
-    private fun submitTransaction(type: String, category: String) {
-        val raw = amountInput.text.toString().trim()
-        val value = raw.toDoubleOrNull()
+    private fun tagGrid(tags: List<String>, income: Boolean): GridLayout {
+        val grid = GridLayout(this).apply { columnCount = 3 }
+        tags.forEach { tag ->
+            val btn = Ui.text(this, if (income) "+ $tag" else tag, 15f, if (income) Ui.GREEN else Ui.TEXT, bold = true).apply {
+                gravity = Gravity.CENTER
+                maxLines = 2
+                minHeight = dp(54)
+                setPadding(dp(6), dp(8), dp(6), dp(8))
+                background = if (income) Ui.pressable(this@ExpenseActivity, Ui.GREEN_SOFT, 14, Ui.GREEN_LINE)
+                else Ui.pressable(this@ExpenseActivity, Ui.SURFACE_2, 14, Ui.LINE)
+                isClickable = true
+                setOnClickListener { save(if (income) "Income" else "Expense", tag) }
+            }
+            grid.addView(btn, GridLayout.LayoutParams().apply {
+                width = 0
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                setMargins(dp(4), dp(4), dp(4), dp(4))
+            })
+        }
+        return grid
+    }
+
+    private fun save(type: String, category: String) {
+        val value = amountInput.text.toString().trim().toDoubleOrNull()
         if (value == null || value <= 0.0) {
-            vibrate(80)
-            Toast.makeText(this, "Please enter an amount first", Toast.LENGTH_SHORT).show()
+            Ui.vibrate(this, 90)
+            amountInput.error = "Enter the amount first"
             amountInput.requestFocus()
             return
         }
-
-        vibrate(45)
-
-        val sign = if (type == "Income") "+" else "-"
+        Ui.vibrate(this, 45)
         UploadWorker.enqueue(this, value, type, category, selectedPayment)
-
-        Toast.makeText(
-            this,
-            "✓ Saved $sign₹$value · $category · $selectedPayment",
-            Toast.LENGTH_SHORT
-        ).show()
-
+        Prefs.countUse(this, category)
+        val signed = if (type == "Income") Ui.money(value, sign = true) else Ui.money(-value)
+        Toast.makeText(this, "✓ $signed · $category · $selectedPayment", Toast.LENGTH_SHORT).show()
         finish()
-    }
-
-    private fun vibrate(durationMs: Long) {
-        try {
-            if (Build.VERSION.SDK_INT >= 31) {
-                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-                vm?.defaultVibrator?.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                val v = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                if (Build.VERSION.SDK_INT >= 26) {
-                    v?.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    v?.vibrate(durationMs)
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun makePillDrawable(bgColor: Int, radius: Float, strokeColor: Int = 0, strokeWidth: Float = 0f): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = radius
-            setColor(bgColor)
-            if (strokeWidth > 0f) setStroke(dp(strokeWidth.toInt()), strokeColor)
-        }
-    }
-
-    private fun makeTagDrawable(bgColor: Int, strokeColor: Int, rippleColor: Int): RippleDrawable {
-        val normal = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(12).toFloat()
-            setColor(bgColor)
-            setStroke(dp(1), strokeColor)
-        }
-        val mask = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(12).toFloat()
-            setColor(Color.BLACK)
-        }
-        return RippleDrawable(ColorStateList.valueOf(rippleColor), normal, mask)
     }
 }

@@ -65,6 +65,19 @@ object Prefs {
     fun lastPayment(c: Context): String = sp(c).getString("lastPayment", "GPay") ?: "GPay"
     fun setLastPayment(c: Context, p: String) = sp(c).edit().putString("lastPayment", p).apply()
 
+    /** Most-used tags first (ties keep the sheet's order), so the usual tags are always at the top. */
+    fun byUsage(c: Context, tags: List<String>): List<String> {
+        val s = sp(c)
+        return tags.withIndex()
+            .sortedWith(compareByDescending<IndexedValue<String>> { s.getInt("use:" + it.value, 0) }.thenBy { it.index })
+            .map { it.value }
+    }
+
+    fun countUse(c: Context, tag: String) {
+        val s = sp(c)
+        s.edit().putInt("use:$tag", s.getInt("use:$tag", 0) + 1).apply()
+    }
+
     // --- Shake trigger ---
     fun shakeEnabled(c: Context): Boolean = sp(c).getBoolean("shake", true)
     fun setShakeEnabled(c: Context, on: Boolean) = sp(c).edit().putBoolean("shake", on).apply()

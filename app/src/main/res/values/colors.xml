@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep in sync with Ui.kt -->
+    <color name="st_bg">#FF0B1220</color>
+    <color name="st_surface">#FF131C2F</color>
+    <color name="st_line">#FF2A3754</color>
+    <color name="st_accent">#FF8B93FF</color>
+</resources>

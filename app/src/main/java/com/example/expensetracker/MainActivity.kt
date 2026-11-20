@@ -5,9 +5,6 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -33,15 +30,16 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * The app itself: Google sign-in, then three tabs:
- *  - Dashboard: this month's income / spending for the family (or just me)
- *  - Recent: my last entries (admin: everyone's) — tap one to edit or delete
+ * The app: Google sign-in, then three tabs on a bottom bar (thumb-reachable):
+ *  - Home: this month's money for the family (or just me)
+ *  - Recent: latest entries; tap to edit, long-press to delete
  *  - Settings: shake trigger, permissions, account, and (admin) family members
+ * The round + button opens the quick-add sheet from any tab.
  */
 class MainActivity : Activity() {
 
     private val scope = MainScope()
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = Ui.dp(this, v)
 
     private var tab = 0
     private val month: Calendar = Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1) }
@@ -50,17 +48,9 @@ class MainActivity : Activity() {
     private var firstResume = true
 
     private lateinit var body: LinearLayout
-    private val tabButtons = mutableListOf<TextView>()
-
-    // Palette
-    private val INK = Color.parseColor("#0F172A")
-    private val MUTED = Color.parseColor("#64748B")
-    private val LINE = Color.parseColor("#E2E8F0")
-    private val BG = Color.parseColor("#F8FAFC")
-    private val INDIGO = Color.parseColor("#4F46E5")
-    private val RED = Color.parseColor("#DC2626")
-    private val GREEN = Color.parseColor("#16A34A")
-    private val BLUE = Color.parseColor("#2563EB")
+    private lateinit var scroller: ScrollView
+    private var fab: View? = null
+    private val navItems = mutableListOf<LinearLayout>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,8 +62,8 @@ class MainActivity : Activity() {
         if (Prefs.isSignedIn(this)) {
             ShakeService.start(this)
             Api.refreshLists(this)
-            // Coming back (e.g. after adding an entry or granting a permission): reload the tab
-            if (!firstResume && ::body.isInitialized && tabButtons.isNotEmpty()) showTab(tab)
+            // Coming back (after adding an entry or granting a permission): reload the tab
+            if (!firstResume && ::body.isInitialized && navItems.isNotEmpty()) showTab(tab)
         }
         firstResume = false
     }
@@ -92,54 +82,82 @@ class MainActivity : Activity() {
     }
 
     /** Runs a server call; shows errors, and drops back to sign-in if the session ended. */
-    private fun launch(block: suspend () -> Unit) {
+    private fun launch(onFail: ((String) -> Unit)? = null, block: suspend () -> Unit) {
         scope.launch {
-            try {
+            val msg = try {
                 block()
+                return@launch
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
                 if (e.auth) {
                     signInMessage = e.message
                     render()
-                } else toast(e.message ?: "Something went wrong")
+                    return@launch
+                }
+                e.message ?: "Something went wrong"
             } catch (_: IOException) {
-                toast("No connection to the sheet. Try again.")
+                "Couldn't reach the sheet. Check your internet."
             } catch (e: Exception) {
-                toast(e.message ?: "Something went wrong")
+                e.message ?: "Something went wrong"
             }
+            if (onFail != null) onFail(msg) else toast(msg)
         }
     }
 
+    /** Shown in place of "Loading…" when a tab couldn't load. */
+    private fun showError(holder: LinearLayout, msg: String) {
+        if (!holder.isAttachedToWindow) return
+        holder.removeAllViews()
+        holder.addView(Ui.card(this).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(Ui.text(this@MainActivity, "📡", 32f).apply { gravity = Gravity.CENTER })
+            addView(Ui.text(this@MainActivity, msg, 16f, Ui.MUTED).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(14))
+            })
+            addView(Ui.button(this@MainActivity, "Retry", primary = false) { showTab(tab) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        })
+    }
+
     // =========================================================================
-    // Screens
+    // Sign-in / not configured
     // =========================================================================
+
+    private fun page() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(24), dp(32), dp(24), dp(32))
+    }
 
     private fun notConfiguredScreen() {
         val root = page()
-        root.addView(title("⚡ ShakeTrack"))
-        root.addView(card().apply {
-            addView(text("This build isn't connected to a sheet yet.\n\nFill in script_url and google_web_client_id in app/src/main/res/values/config.xml, then rebuild. See the README.", 14f, INK))
+        root.addView(Ui.text(this, "⚡ ShakeTrack", 28f, bold = true))
+        root.addView(Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity,
+                "This build isn't connected to a sheet yet.\n\nFill in script_url and google_web_client_id in app/src/main/res/values/config.xml, then rebuild.",
+                16f, Ui.MUTED))
         })
-        setContentView(ScrollView(this).apply { setBackgroundColor(BG); addView(root) })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(root) })
     }
 
     private fun signInScreen() {
-        tabButtons.clear()
+        navItems.clear()
         val root = page().apply { gravity = Gravity.CENTER_HORIZONTAL }
-        root.addView(space(48))
-        root.addView(text("⚡", 48f, INK).apply { gravity = Gravity.CENTER })
-        root.addView(title("ShakeTrack").apply { gravity = Gravity.CENTER })
-        root.addView(text("Family expenses in one Google Sheet.\nShake your phone, type the amount, tap a tag. Done.", 14f, MUTED).apply {
+        root.addView(Ui.space(this, 56))
+        root.addView(Ui.text(this, "⚡", 56f).apply { gravity = Gravity.CENTER })
+        root.addView(Ui.text(this, "ShakeTrack", 32f, bold = true).apply { gravity = Gravity.CENTER })
+        root.addView(Ui.text(this, "Family expenses in one Google Sheet.\nShake your phone, type the amount, tap a tag.", 16f, Ui.MUTED).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(32))
+            setLineSpacing(0f, 1.2f)
+            setPadding(0, dp(8), 0, dp(40))
         })
 
-        val status = text(signInMessage ?: "", 13f, RED).apply { gravity = Gravity.CENTER }
-        val btn = primaryButton("Sign in with Google") {}
-        btn.setOnClickListener {
+        val status = Ui.text(this, signInMessage ?: "", 15f, Ui.RED).apply { gravity = Gravity.CENTER }
+        lateinit var btn: Button
+        btn = Ui.button(this, "Sign in with Google") {
             btn.isEnabled = false
-            status.setTextColor(MUTED)
+            status.setTextColor(Ui.MUTED)
             status.text = "Signing in…"
             scope.launch {
                 try {
@@ -157,82 +175,99 @@ class MainActivity : Activity() {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: IOException) {
-                    status.setTextColor(RED); status.text = "No connection to the sheet. Try again."
+                    status.setTextColor(Ui.RED); status.text = "No connection to the sheet. Try again."
                 } catch (e: Exception) {
-                    status.setTextColor(RED); status.text = e.message ?: "Sign-in failed"
+                    status.setTextColor(Ui.RED); status.text = e.message ?: "Sign-in failed"
                 }
                 btn.isEnabled = true
             }
         }
-        root.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
-        root.addView(status.apply { setPadding(0, dp(16), 0, 0) })
-        root.addView(text("Only family members the admin has added can sign in.", 12f, MUTED).apply {
-            gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0)
+        root.addView(btn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        root.addView(status.apply { setPadding(0, dp(18), 0, 0) })
+        root.addView(Ui.text(this, "Only family members the admin has added can sign in.", 14f, Ui.FAINT).apply {
+            gravity = Gravity.CENTER; setPadding(0, dp(28), 0, 0)
         })
-        setContentView(ScrollView(this).apply { setBackgroundColor(BG); addView(root) })
+        setContentView(ScrollView(this).apply { setBackgroundColor(Ui.BG); addView(root) })
     }
 
+    // =========================================================================
+    // Main shell: header, content, bottom bar, + button
+    // =========================================================================
+
     private fun mainScreen() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG)
-        }
+        val frame = FrameLayout(this).apply { setBackgroundColor(Ui.BG) }
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         // Header
         val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(8))
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(6))
         }
-        val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        names.addView(text("⚡ ShakeTrack", 20f, INK, bold = true))
-        val who = Prefs.name(this).ifEmpty { Prefs.email(this) } + if (Prefs.isAdmin(this)) " · Admin" else ""
-        names.addView(text(who, 12f, MUTED))
-        header.addView(names, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(primaryButton("+ Add") {
-            startActivity(Intent(this, ExpenseActivity::class.java))
-        }.apply { setPadding(dp(18), 0, dp(18), 0) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
-        root.addView(header)
-
-        // Tabs
-        tabButtons.clear()
-        val tabs = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(16), dp(4), dp(16), dp(8))
-        }
-        listOf("Dashboard", "Recent", "Settings").forEachIndexed { i, label ->
-            val t = TextView(this).apply {
-                text = label
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setPadding(0, dp(9), 0, dp(9))
-                setOnClickListener { showTab(i) }
-            }
-            tabButtons.add(t)
-            tabs.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(dp(4), 0, dp(4), 0)
-            })
-        }
-        root.addView(tabs)
+        header.addView(Ui.text(this, "⚡ ShakeTrack", 24f, bold = true))
+        val who = Prefs.name(this).ifEmpty { Prefs.email(this) } + if (Prefs.isAdmin(this)) "  ·  Admin" else ""
+        header.addView(Ui.text(this, who, 14f, Ui.MUTED).apply { setPadding(0, dp(2), 0, 0) })
+        column.addView(header)
 
         body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(4), dp(16), dp(32))
+            setPadding(dp(16), dp(6), dp(16), dp(110)) // room for the + button
         }
-        root.addView(ScrollView(this).apply { addView(body) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        setContentView(root)
+        scroller = ScrollView(this).apply { addView(body); isVerticalScrollBarEnabled = false }
+        column.addView(scroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // Bottom navigation
+        navItems.clear()
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Ui.SURFACE)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+        }
+        listOf("📊" to "Home", "🧾" to "Recent", "⚙️" to "Settings").forEachIndexed { i, (icon, label) ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(0, dp(6), 0, dp(6))
+                isClickable = true
+                setOnClickListener { showTab(i) }
+                addView(Ui.text(this@MainActivity, icon, 20f).apply { gravity = Gravity.CENTER })
+                addView(Ui.text(this@MainActivity, label, 13f, Ui.MUTED, bold = true).apply { gravity = Gravity.CENTER })
+            }
+            navItems.add(item)
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(62), 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+        }
+        column.addView(View(this).apply { setBackgroundColor(Ui.LINE) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+        column.addView(nav)
+        frame.addView(column)
+
+        // Floating + button, bottom-right above the bar
+        val fab = Ui.text(this, "+", 32f, 0xFFFFFFFF.toInt(), bold = true).apply {
+            this@MainActivity.fab = this
+            gravity = Gravity.CENTER
+            background = Ui.pressable(this@MainActivity, Ui.ACCENT_STRONG, 32)
+            elevation = dp(8).toFloat()
+            contentDescription = "Add entry"
+            setOnClickListener { startActivity(Intent(this@MainActivity, ExpenseActivity::class.java)) }
+        }
+        frame.addView(fab, FrameLayout.LayoutParams(dp(64), dp(64)).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = dp(20)
+            bottomMargin = dp(92)
+        })
+
+        setContentView(frame)
         showTab(tab)
     }
 
     private fun showTab(i: Int) {
         tab = i
-        tabButtons.forEachIndexed { idx, t ->
+        navItems.forEachIndexed { idx, item ->
             val on = idx == i
-            t.background = round(if (on) INDIGO else Color.WHITE, 12, if (on) 0 else LINE)
-            t.setTextColor(if (on) Color.WHITE else Color.parseColor("#334155"))
-            t.typeface = Typeface.create("sans-serif-medium", if (on) Typeface.BOLD else Typeface.NORMAL)
+            item.background = if (on) Ui.round(this, Ui.ACCENT_SOFT, 16) else null
+            (item.getChildAt(1) as TextView).setTextColor(if (on) Ui.ACCENT else Ui.MUTED)
         }
+        fab?.visibility = if (i == 2) View.GONE else View.VISIBLE // not needed on Settings
         body.removeAllViews()
+        scroller.scrollTo(0, 0)
         when (i) {
             0 -> dashboardTab()
             1 -> recentTab()
@@ -240,8 +275,12 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun loading() = Ui.text(this, "Loading…", 15f, Ui.MUTED).apply {
+        gravity = Gravity.CENTER; setPadding(0, dp(40), 0, 0)
+    }
+
     // =========================================================================
-    // Dashboard
+    // Home (dashboard)
     // =========================================================================
 
     private fun dashboardTab() {
@@ -249,28 +288,30 @@ class MainActivity : Activity() {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(8))
+            setPadding(0, dp(4), 0, dp(10))
         }
         val monthLabel = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(month.time)
-        nav.addView(chip("‹") { month.add(Calendar.MONTH, -1); showTab(0) })
-        nav.addView(text(monthLabel, 16f, INK, bold = true).apply { gravity = Gravity.CENTER },
+        nav.addView(arrow("‹") { month.add(Calendar.MONTH, -1); showTab(0) })
+        nav.addView(Ui.text(this, monthLabel, 19f, bold = true).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        nav.addView(chip("›") { month.add(Calendar.MONTH, 1); showTab(0) })
+        nav.addView(arrow("›") { month.add(Calendar.MONTH, 1); showTab(0) })
         body.addView(nav)
 
-        // Family / Mine
-        val toggle = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 0, 0, dp(12)) }
-        toggle.addView(segment("Family", !mineOnly) { mineOnly = false; showTab(0) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(6) })
-        toggle.addView(segment("Only me", mineOnly) { mineOnly = true; showTab(0) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // Family / Only me
+        val toggle = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        toggle.addView(Ui.chip(this, "Family", !mineOnly) { mineOnly = false; showTab(0) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
+        toggle.addView(Ui.chip(this, "Only me", mineOnly) { mineOnly = true; showTab(0) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         body.addView(toggle)
 
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        holder.addView(text("Loading…", 13f, MUTED).apply { setPadding(0, dp(24), 0, 0); gravity = Gravity.CENTER })
+        holder.addView(loading())
         body.addView(holder)
 
         val reqYear = month.get(Calendar.YEAR)
         val reqMonth = month.get(Calendar.MONTH)
-        launch {
+        launch({ showError(holder, it) }) {
             val j = Api.call(this@MainActivity, "summary", JSONObject()
                 .put("year", reqYear).put("month", reqMonth).put("scope", if (mineOnly) "me" else "family"))
             if (tab != 0 || !holder.isAttachedToWindow) return@launch
@@ -279,51 +320,69 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun arrow(t: String, onClick: () -> Unit) = Ui.text(this, t, 26f, Ui.ACCENT, bold = true).apply {
+        gravity = Gravity.CENTER
+        background = Ui.pressable(this@MainActivity, Ui.SURFACE, 14, Ui.LINE)
+        layoutParams = LinearLayout.LayoutParams(dp(52), dp(48))
+        setOnClickListener { onClick() }
+    }
+
     private fun fillDashboard(holder: LinearLayout, j: JSONObject) {
         val income = j.optDouble("income", 0.0)
         val expense = j.optDouble("expense", 0.0)
-        val saved = income - expense
+        val left = income - expense
+        val count = j.optInt("count")
 
-        // KPI cards
+        // Hero: what's left this month
+        val hero = Ui.card(this).apply { background = Ui.round(this@MainActivity, Ui.ACCENT_SOFT, 22, Ui.LINE) }
+        hero.addView(Ui.label(this, "Left this month", Ui.ACCENT).apply { setPadding(0, 0, 0, dp(4)) })
+        hero.addView(Ui.text(this, Ui.money(left), 38f, if (left >= 0) Ui.TEXT else Ui.RED, bold = true))
+        val rate = if (income > 0) "${((left / income) * 100).toInt()}% of income saved" else "No income logged yet"
+        hero.addView(Ui.text(this, "$rate  ·  $count entries", 14f, Ui.MUTED).apply { setPadding(0, dp(4), 0, 0) })
+        holder.addView(hero)
+
+        // Income / Spent
         val kpis = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        kpis.addView(kpi("Income", income, BLUE), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(6) })
-        kpis.addView(kpi("Spent", expense, RED), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(6) })
-        kpis.addView(kpi("Left", saved, if (saved >= 0) GREEN else RED), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        kpis.addView(kpi("Money in", income, Ui.GREEN), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(10) })
+        kpis.addView(kpi("Spent", expense, Ui.RED), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         holder.addView(kpis)
 
-        val rate = if (income > 0) "${((saved / income) * 100).toInt()}% of income saved" else ""
-        val count = j.optInt("count")
-        holder.addView(text(listOf("$count entries", rate).filter { it.isNotEmpty() }.joinToString(" · "), 12f, MUTED).apply {
-            setPadding(dp(4), dp(8), 0, dp(12))
-        })
-
         if (count == 0) {
-            holder.addView(card().apply { addView(text("Nothing logged this month yet. Shake your phone to add the first one.", 14f, MUTED)) })
+            holder.addView(Ui.card(this).apply {
+                addView(Ui.text(this@MainActivity, "Nothing logged this month yet.\nShake your phone or tap + to add the first one.", 16f, Ui.MUTED).apply {
+                    setLineSpacing(0f, 1.2f)
+                })
+            })
             return
         }
 
-        holder.addView(breakdown("Where the money went", j.optJSONArray("expense_categories"), expense, RED))
+        holder.addView(breakdown("Where the money went", j.optJSONArray("expense_categories"), expense, Ui.RED))
         val inc = j.optJSONArray("income_categories")
-        if (inc != null && inc.length() > 0) holder.addView(breakdown("Money in", inc, income, BLUE))
+        if (inc != null && inc.length() > 0) holder.addView(breakdown("Money in", inc, income, Ui.GREEN))
 
         val people = j.optJSONArray("people")
         if (!mineOnly && people != null && people.length() > 1) {
-            val c = card()
-            c.addView(sectionTitle("By person"))
+            val c = Ui.card(this)
+            c.addView(Ui.label(this, "Spent by person"))
             var max = 1.0
             for (k in 0 until people.length()) max = maxOf(max, people.getJSONObject(k).optDouble("expense"))
             for (k in 0 until people.length()) {
                 val p = people.getJSONObject(k)
-                c.addView(barRow(p.optString("name"), p.optDouble("expense"), p.optDouble("expense") / max, RED,
-                    "in ${money(p.optDouble("income"))}"))
+                c.addView(barRow(p.optString("name"), p.optDouble("expense"), p.optDouble("expense") / max, Ui.RED,
+                    "in ${Ui.money(p.optDouble("income"))}"))
             }
             holder.addView(c)
         }
     }
 
+    private fun kpi(label: String, value: Double, color: Int) = Ui.card(this).apply {
+        addView(Ui.label(this@MainActivity, label, color).apply { setPadding(0, 0, 0, dp(4)) })
+        addView(Ui.text(this@MainActivity, Ui.money(value), 22f, bold = true).apply { maxLines = 1 })
+    }
+
     private fun breakdown(heading: String, arr: JSONArray?, total: Double, color: Int): View {
-        val c = card()
-        c.addView(sectionTitle(heading))
+        val c = Ui.card(this)
+        c.addView(Ui.label(this, heading))
         if (arr == null) return c
         for (k in 0 until arr.length()) {
             val o = arr.getJSONObject(k)
@@ -335,58 +394,49 @@ class MainActivity : Activity() {
     }
 
     private fun barRow(label: String, amount: Double, frac: Double, color: Int, note: String): View {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
-        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        top.addView(text(label, 13f, INK), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        top.addView(text(note, 11f, MUTED).apply { setPadding(0, 0, dp(10), 0) })
-        top.addView(text(money(amount), 13f, INK, bold = true))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(Ui.text(this, label, 16f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(Ui.text(this, note, 13f, Ui.MUTED).apply { setPadding(0, 0, dp(12), 0) })
+        top.addView(Ui.text(this, Ui.money(amount), 16f, bold = true))
         row.addView(top)
         val f = frac.coerceIn(0.0, 1.0).toFloat()
         val track = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = round(Color.parseColor("#F1F5F9"), 4)
+            background = Ui.round(this@MainActivity, Ui.SURFACE_2, 5)
         }
-        track.addView(View(this).apply { background = round(color, 4) },
-            LinearLayout.LayoutParams(0, dp(6), maxOf(f, 0.01f)))
-        track.addView(View(this), LinearLayout.LayoutParams(0, dp(6), maxOf(1f - f, 0f)))
-        row.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply { topMargin = dp(5) })
+        track.addView(View(this).apply { background = Ui.round(this@MainActivity, color, 5) },
+            LinearLayout.LayoutParams(0, dp(8), maxOf(f, 0.01f)))
+        track.addView(View(this), LinearLayout.LayoutParams(0, dp(8), maxOf(1f - f, 0f)))
+        row.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(8) })
         return row
     }
 
-    private fun kpi(label: String, value: Double, color: Int): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = round(Color.WHITE, 14, LINE)
-            addView(text(label.uppercase(), 10f, color, bold = true))
-            addView(text(money(value), 16f, INK, bold = true).apply { setPadding(0, dp(4), 0, 0); maxLines = 1 })
-        }
-    }
-
     // =========================================================================
-    // Recent entries (edit / delete)
+    // Recent entries: tap = edit, long-press = delete
     // =========================================================================
 
     private fun recentTab() {
-        val pendingNote = text("", 12f, Color.parseColor("#92400E")).apply {
+        val pendingNote = Ui.text(this, "", 15f, Ui.AMBER).apply {
             visibility = View.GONE
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = round(Color.parseColor("#FEF3C7"), 10)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = Ui.round(this@MainActivity, Ui.AMBER_SOFT, 14)
         }
-        body.addView(pendingNote, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
-        body.addView(text(
-            if (Prefs.isAdmin(this)) "Latest family entries. Tap one to edit or delete." else "Your latest entries. Tap one to edit or delete.",
-            12f, MUTED
-        ).apply { setPadding(dp(4), 0, 0, dp(10)) })
+        body.addView(pendingNote, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(6); bottomMargin = dp(6)
+        })
+        body.addView(Ui.text(this,
+            (if (Prefs.isAdmin(this)) "Latest family entries." else "Your latest entries.") + "  Tap to edit · hold to delete",
+            14f, Ui.MUTED).apply { setPadding(dp(4), dp(6), 0, dp(10)) })
 
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        list.addView(text("Loading…", 13f, MUTED).apply { setPadding(0, dp(24), 0, 0); gravity = Gravity.CENTER })
+        list.addView(loading())
         body.addView(list)
 
-        launch {
+        launch({ showError(list, it) }) {
             val pending = withContext(Dispatchers.IO) { UploadWorker.pendingCount(this@MainActivity) }
             if (pending > 0) {
-                pendingNote.text = "⏳ $pending saved on this phone, waiting to upload (needs internet)."
+                pendingNote.text = "⏳  $pending saved on this phone, waiting for internet to upload"
                 pendingNote.visibility = View.VISIBLE
             }
             val j = Api.call(this@MainActivity, "recent")
@@ -394,12 +444,19 @@ class MainActivity : Activity() {
             list.removeAllViews()
             val arr = j.optJSONArray("entries") ?: JSONArray()
             if (arr.length() == 0) {
-                list.addView(card().apply { addView(text("No entries yet.", 14f, MUTED)) })
+                list.addView(Ui.card(this@MainActivity, 0).apply { addView(Ui.text(this@MainActivity, "No entries yet.", 16f, Ui.MUTED)) })
                 return@launch
             }
             val fmt = SimpleDateFormat("d MMM, h:mm a", Locale.getDefault())
+            var lastDay = ""
+            val dayFmt = SimpleDateFormat("EEEE, d MMM", Locale.getDefault())
             for (k in 0 until arr.length()) {
                 val e = arr.getJSONObject(k)
+                val day = dayFmt.format(Date(e.optLong("ts")))
+                if (day != lastDay) {
+                    list.addView(Ui.label(this@MainActivity, day).apply { setPadding(dp(4), dp(14), 0, dp(8)) })
+                    lastDay = day
+                }
                 list.addView(entryRow(e, fmt))
             }
         }
@@ -410,52 +467,74 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = round(Color.WHITE, 12, LINE)
+            minimumHeight = dp(68)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = Ui.pressable(this@MainActivity, Ui.SURFACE, 16, Ui.LINE)
             isClickable = true
             setOnClickListener { editDialog(e) }
+            setOnLongClickListener { Ui.vibrate(this@MainActivity, 30); confirmDelete(e, null); true }
         }
+        // Colored dot: green = money in, red = spent
+        row.addView(View(this).apply { background = Ui.round(this@MainActivity, if (income) Ui.GREEN else Ui.RED, 6) },
+            LinearLayout.LayoutParams(dp(10), dp(10)).apply { rightMargin = dp(14) })
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(text(e.optString("category"), 14f, INK, bold = true))
-        val meta = mutableListOf(fmt.format(Date(e.optLong("ts"))), e.optString("payment"))
+        left.addView(Ui.text(this, e.optString("category"), 17f, bold = true))
+        val meta = mutableListOf(fmt.format(Date(e.optLong("ts"))).substringAfter(", "), e.optString("payment"))
         if (Prefs.isAdmin(this) && e.optString("email") != Prefs.email(this)) meta.add(e.optString("user"))
-        left.addView(text(meta.filter { it.isNotEmpty() }.joinToString(" · "), 11f, MUTED))
+        left.addView(Ui.text(this, meta.filter { it.isNotEmpty() }.joinToString("  ·  "), 14f, Ui.MUTED).apply { setPadding(0, dp(2), 0, 0) })
         row.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(text((if (income) "+" else "−") + money(e.optDouble("amount")), 15f, if (income) GREEN else RED, bold = true))
+        val amt = e.optDouble("amount")
+        row.addView(Ui.text(this, if (income) Ui.money(amt, sign = true) else Ui.money(-amt), 18f, if (income) Ui.GREEN else Ui.RED, bold = true))
         return row.also {
             it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
         }
     }
 
+    private fun confirmDelete(e: JSONObject, parent: AlertDialog?) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete this entry?")
+            .setMessage("${e.optString("category")}  ·  ${Ui.money(e.optDouble("amount"))}\nIt will be removed from the sheet. This can't be undone.")
+            .setPositiveButton("Delete") { _, _ ->
+                launch {
+                    Api.call(this@MainActivity, "delete", JSONObject().put("id", e.optString("id")))
+                    parent?.dismiss()
+                    toast("Deleted")
+                    showTab(1)
+                }
+            }
+            .setNegativeButton("Keep", null)
+            .show()
+    }
+
     private fun editDialog(e: JSONObject) {
         val expCats = Prefs.expenseCategories(this)
         val incCats = Prefs.incomeCategories(this)
-        // One list: expense tags, then income tags shown with "+"
         val curCat = e.optString("category")
         val curIncome = e.optString("type") == "Income"
         val exp = if (!curIncome && curCat !in expCats) expCats + curCat else expCats
         val inc = if (curIncome && curCat !in incCats) incCats + curCat else incCats
         val labels = exp + inc.map { "+ $it" }
-
         val pays = Prefs.payments(this).let { if (e.optString("payment") in it) it else it + e.optString("payment") }
 
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
-        form.addView(fieldLabel("Amount (₹)"))
-        val amount = input("0", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL).apply {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
+        form.addView(Ui.label(this, "Amount (₹)").apply { setPadding(0, dp(8), 0, dp(6)) })
+        val amount = Ui.input(this, "0", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL, 20f).apply {
             val a = e.optDouble("amount")
             setText(if (a % 1.0 == 0.0) a.toLong().toString() else a.toString())
         }
         form.addView(amount)
-        form.addView(fieldLabel("Category"))
+        form.addView(Ui.label(this, "Category").apply { setPadding(0, dp(16), 0, dp(6)) })
         val cat = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, labels)
             setSelection(if (curIncome) exp.size + inc.indexOf(curCat) else exp.indexOf(curCat))
+            minimumHeight = dp(50)
         }
         form.addView(cat)
-        form.addView(fieldLabel("Paid with"))
+        form.addView(Ui.label(this, "Paid with").apply { setPadding(0, dp(16), 0, dp(6)) })
         val pay = Spinner(this).apply {
             adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, pays)
             setSelection(pays.indexOf(e.optString("payment")).coerceAtLeast(0))
+            minimumHeight = dp(50)
         }
         form.addView(pay)
 
@@ -469,7 +548,7 @@ class MainActivity : Activity() {
         dlg.setOnShowListener {
             dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val value = amount.text.toString().trim().toDoubleOrNull()
-                if (value == null || value <= 0) { toast("Enter an amount"); return@setOnClickListener }
+                if (value == null || value <= 0) { amount.error = "Enter an amount"; return@setOnClickListener }
                 val idx = cat.selectedItemPosition
                 val isIncome = idx >= exp.size
                 val category = if (isIncome) inc[idx - exp.size] else exp[idx]
@@ -486,22 +565,8 @@ class MainActivity : Activity() {
                 }
             }
             dlg.getButton(AlertDialog.BUTTON_NEUTRAL).apply {
-                setTextColor(RED)
-                setOnClickListener {
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Delete this entry?")
-                        .setMessage("${e.optString("category")} · ${money(e.optDouble("amount"))}\nIt will be removed from the sheet. This can't be undone.")
-                        .setPositiveButton("Delete") { _, _ ->
-                            launch {
-                                Api.call(this@MainActivity, "delete", JSONObject().put("id", e.optString("id")))
-                                dlg.dismiss()
-                                toast("Deleted")
-                                showTab(1)
-                            }
-                        }
-                        .setNegativeButton("Keep", null)
-                        .show()
-                }
+                setTextColor(Ui.RED)
+                setOnClickListener { confirmDelete(e, dlg) }
             }
         }
         dlg.show()
@@ -513,12 +578,13 @@ class MainActivity : Activity() {
 
     private fun settingsTab() {
         // Shake trigger
-        val shake = card()
-        shake.addView(sectionTitle("SHAKE TO ADD"))
+        val shake = Ui.card(this, 6)
+        shake.addView(Ui.label(this, "Shake to add"))
         val sw = Switch(this).apply {
             text = "Shake the phone to open the add screen"
-            textSize = 14f
-            setTextColor(INK)
+            textSize = 16f
+            setTextColor(Ui.TEXT)
+            minHeight = dp(48)
             isChecked = Prefs.shakeEnabled(this@MainActivity)
             setOnCheckedChangeListener { _, on ->
                 Prefs.setShakeEnabled(this@MainActivity, on)
@@ -526,45 +592,41 @@ class MainActivity : Activity() {
             }
         }
         shake.addView(sw)
-        shake.addView(text("Give the phone 3 quick, firm shakes while the screen is on. A small notification stays while it's listening.", 12f, MUTED).apply {
-            setPadding(0, dp(6), 0, dp(12))
-        })
-        shake.addView(secondaryButton("Open the add screen now") {
-            startActivity(Intent(this, ExpenseActivity::class.java))
+        shake.addView(Ui.text(this, "Give the phone 3 quick, firm shakes while the screen is on.", 14f, Ui.MUTED).apply {
+            setPadding(0, dp(4), 0, 0)
         })
         body.addView(shake)
 
         // Permissions
-        val perms = card()
-        perms.addView(sectionTitle("PERMISSIONS"))
+        val perms = Ui.card(this)
+        perms.addView(Ui.label(this, "Permissions"))
         val overlay = Settings.canDrawOverlays(this)
-        perms.addView(actionButton(if (overlay) "✓ Display over other apps" else "Allow display over other apps (needed for shake)", overlay) {
+        perms.addView(permRow(if (overlay) "Display over other apps" else "Allow display over other apps", "Needed for shake to open the add screen", overlay) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         })
         if (Build.VERSION.SDK_INT >= 33) {
             val notif = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-            perms.addView(actionButton(if (notif) "✓ Notifications" else "Allow notifications", notif) {
+            perms.addView(permRow(if (notif) "Notifications" else "Allow notifications", "Shows the 'Add now' shortcut", notif) {
                 askNotificationPermission()
             })
         }
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         val exempt = pm.isIgnoringBatteryOptimizations(packageName)
-        perms.addView(actionButton(if (exempt) "✓ Battery optimization off" else "Turn off battery optimization (keeps shake working)", exempt) {
+        perms.addView(permRow(if (exempt) "Battery optimization off" else "Turn off battery optimization", "Keeps shake working in the background", exempt) {
             if (!exempt) startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:$packageName")))
         })
         body.addView(perms)
 
-        // Family (admin only)
         if (Prefs.isAdmin(this)) body.addView(familyCard())
 
         // Account
-        val acct = card()
-        acct.addView(sectionTitle("ACCOUNT"))
-        acct.addView(text(Prefs.name(this), 15f, INK, bold = true))
-        acct.addView(text(Prefs.email(this) + if (Prefs.isAdmin(this)) " · Admin" else " · Family member", 12f, MUTED).apply {
-            setPadding(0, 0, 0, dp(12))
+        val acct = Ui.card(this)
+        acct.addView(Ui.label(this, "Account"))
+        acct.addView(Ui.text(this, Prefs.name(this), 18f, bold = true))
+        acct.addView(Ui.text(this, Prefs.email(this) + if (Prefs.isAdmin(this)) "  ·  Admin" else "  ·  Family member", 14f, Ui.MUTED).apply {
+            setPadding(0, dp(2), 0, dp(14))
         })
-        acct.addView(secondaryButton("Sign out") {
+        acct.addView(Ui.button(this, "Sign out", primary = false) {
             AlertDialog.Builder(this)
                 .setTitle("Sign out?")
                 .setMessage("Entries not uploaded yet stay on this phone and upload after you sign in again.")
@@ -581,29 +643,53 @@ class MainActivity : Activity() {
         body.addView(acct)
     }
 
+    /** One permission line: status dot, title, hint; tappable when not yet granted. */
+    private fun permRow(title: String, hint: String, done: Boolean, onClick: () -> Unit): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(60)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = if (done) Ui.round(this@MainActivity, Ui.GREEN_SOFT, 14, Ui.GREEN_LINE)
+            else Ui.pressable(this@MainActivity, Ui.SURFACE_2, 14, Ui.LINE)
+            if (!done) setOnClickListener { onClick() }
+        }
+        row.addView(Ui.text(this, if (done) "✓" else "!", 18f, if (done) Ui.GREEN else Ui.AMBER, bold = true).apply {
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.WRAP_CONTENT))
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
+        texts.addView(Ui.text(this, title, 16f, bold = true))
+        texts.addView(Ui.text(this, hint, 13f, Ui.MUTED))
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (!done) row.addView(Ui.text(this, "›", 22f, Ui.MUTED, bold = true))
+        return row.also {
+            it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+        }
+    }
+
     private fun familyCard(): View {
-        val c = card()
-        c.addView(sectionTitle("FAMILY MEMBERS"))
-        c.addView(text("Only these Google accounts can sign in. Everyone sees the family dashboard; members can edit only their own entries.", 12f, MUTED).apply {
+        val c = Ui.card(this)
+        c.addView(Ui.label(this, "Family members"))
+        c.addView(Ui.text(this, "Only these Google accounts can sign in. Everyone sees the family totals; members can edit only their own entries.", 14f, Ui.MUTED).apply {
             setPadding(0, 0, 0, dp(10))
         })
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        list.addView(text("Loading…", 13f, MUTED))
+        list.addView(Ui.text(this, "Loading…", 15f, Ui.MUTED))
         c.addView(list)
 
-        val addRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, 0) }
-        val email = input("name@gmail.com", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
+        val addRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(12), 0, 0) }
+        val email = Ui.input(this, "name@gmail.com", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
         addRow.addView(email, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
-        addRow.addView(primaryButton("Add") {
+        addRow.addView(Ui.button(this, "Add") {
             val v = email.text.toString().trim()
-            if (v.isEmpty()) return@primaryButton
+            if (v.isEmpty()) return@button
             launch {
                 val j = Api.call(this@MainActivity, "member_add", JSONObject().put("email", v))
                 email.setText("")
                 fillMembers(list, j)
                 toast("✓ $v can now sign in")
             }
-        }.apply { setPadding(dp(18), 0, dp(18), 0) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)))
+        }.apply { setPadding(dp(22), 0, dp(22), 0) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(50)))
         c.addView(addRow)
 
         launch { fillMembers(list, Api.call(this@MainActivity, "members")) }
@@ -619,14 +705,14 @@ class MainActivity : Activity() {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(6), 0, dp(6))
+                minimumHeight = dp(48)
             }
-            row.addView(text(m, 13f, INK), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(Ui.text(this, m, 15f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (m == admin) {
-                row.addView(text("Admin", 11f, INDIGO, bold = true))
+                row.addView(Ui.text(this, "Admin", 13f, Ui.ACCENT, bold = true))
             } else {
-                row.addView(text("Remove", 12f, RED, bold = true).apply {
-                    setPadding(dp(8), dp(4), 0, dp(4))
+                row.addView(Ui.text(this, "Remove", 14f, Ui.RED, bold = true).apply {
+                    setPadding(dp(12), dp(10), dp(4), dp(10))
                     setOnClickListener {
                         AlertDialog.Builder(this@MainActivity)
                             .setTitle("Remove $m?")
@@ -651,121 +737,5 @@ class MainActivity : Activity() {
         }
     }
 
-    // =========================================================================
-    // Small UI helpers
-    // =========================================================================
-
-    private fun money(v: Double): String {
-        val f = android.icu.text.NumberFormat.getNumberInstance(Locale("en", "IN")).apply { maximumFractionDigits = 0 }
-        return (if (v < 0) "-₹" else "₹") + f.format(kotlin.math.abs(v))
-    }
-
     private fun toast(m: String) = Toast.makeText(this, m, Toast.LENGTH_SHORT).show()
-
-    private fun round(color: Int, radiusDp: Int, stroke: Int = 0) = GradientDrawable().apply {
-        cornerRadius = dp(radiusDp).toFloat()
-        setColor(color)
-        if (stroke != 0) setStroke(dp(1), stroke)
-    }
-
-    private fun page() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(24), dp(32), dp(24), dp(32))
-    }
-
-    private fun space(h: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(h)) }
-
-    private fun text(t: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
-        text = t
-        textSize = size
-        setTextColor(color)
-        typeface = Typeface.create("sans-serif-medium", if (bold) Typeface.BOLD else Typeface.NORMAL)
-    }
-
-    private fun title(t: String) = text(t, 26f, INK, bold = true)
-
-    private fun sectionTitle(t: String) = text(t, 11f, INDIGO, bold = true).apply {
-        letterSpacing = 0.06f
-        setPadding(0, 0, 0, dp(8))
-    }
-
-    private fun fieldLabel(t: String) = text(t, 12f, Color.parseColor("#334155")).apply { setPadding(0, dp(10), 0, dp(4)) }
-
-    private fun card() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(16), dp(16), dp(16))
-        background = round(Color.WHITE, 16, LINE)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(12)
-        }
-    }
-
-    private fun input(h: String, type: Int) = EditText(this).apply {
-        hint = h
-        setHintTextColor(Color.parseColor("#94A3B8"))
-        textSize = 15f
-        inputType = type
-        setSingleLine()
-        setPadding(dp(12), dp(10), dp(12), dp(10))
-        background = round(BG, 10, Color.parseColor("#CBD5E1"))
-    }
-
-    private fun chip(t: String, onClick: () -> Unit) = TextView(this).apply {
-        text = t
-        textSize = 20f
-        setTextColor(INDIGO)
-        gravity = Gravity.CENTER
-        background = round(Color.WHITE, 12, LINE)
-        layoutParams = LinearLayout.LayoutParams(dp(44), dp(40))
-        setOnClickListener { onClick() }
-    }
-
-    private fun segment(t: String, on: Boolean, onClick: () -> Unit) = TextView(this).apply {
-        text = t
-        textSize = 13f
-        gravity = Gravity.CENTER
-        setPadding(0, dp(8), 0, dp(8))
-        background = round(if (on) Color.parseColor("#EEF2FF") else Color.WHITE, 10, if (on) Color.parseColor("#C7D2FE") else LINE)
-        setTextColor(if (on) Color.parseColor("#4338CA") else MUTED)
-        typeface = Typeface.create("sans-serif-medium", if (on) Typeface.BOLD else Typeface.NORMAL)
-        setOnClickListener { onClick() }
-    }
-
-    private fun primaryButton(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t
-        isAllCaps = false
-        textSize = 14f
-        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        setTextColor(Color.WHITE)
-        background = round(INDIGO, 12)
-        stateListAnimator = null
-        setOnClickListener { onClick() }
-    }
-
-    private fun secondaryButton(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t
-        isAllCaps = false
-        textSize = 14f
-        typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        setTextColor(Color.parseColor("#4338CA"))
-        background = round(Color.parseColor("#EEF2FF"), 12, Color.parseColor("#C7D2FE"))
-        stateListAnimator = null
-        setOnClickListener { onClick() }
-    }
-
-    private fun actionButton(t: String, done: Boolean, onClick: () -> Unit) = Button(this).apply {
-        text = t
-        isAllCaps = false
-        textSize = 13f
-        gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        setPadding(dp(14), 0, dp(14), 0)
-        setTextColor(if (done) Color.parseColor("#15803D") else INK)
-        background = round(if (done) Color.parseColor("#F0FDF4") else Color.parseColor("#F1F5F9"), 10,
-            if (done) Color.parseColor("#BBF7D0") else LINE)
-        stateListAnimator = null
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = dp(8)
-        }
-        setOnClickListener { onClick() }
-    }
 }
